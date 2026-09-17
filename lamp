@@ -11,7 +11,7 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
         'setup creates .data with a commented config.yaml, an empty environments.yaml and example files for syncdb, build scripts and the Access service token; existing files are kept.' \
         'build <id> reruns the configured build of an existing environment inside the running container; docker-build rebuilds the image without layer cache.' \
         'list --search <term> returns only environments whose values contain the term (case-insensitive).' \
-        'add [--git <repository>] [--id <12-hex-id>] [--branch <branch>] [--base-branch <branch>] [--php <version>] [--vpn <profile>] [--build <command>] [--subdomain <label>] [--alias <suffix> ...] [--webroot <directory>] [--proxy-port <port>] [--proxy-exclude <path>] [--visibility private|public]' \
+        'add [--git <repository>] [--id <12-hex-id>] [--branch <branch>] [--base-branch <branch>] [--php <version>] [--vpn <profile>] [--build <command>] [--subdomain <label>] [--directory <name>] [--alias <suffix> ...] [--webroot <directory>] [--proxy-port <port>] [--proxy-exclude <path>] [--visibility private|public]' \
         'exec --environment <id> -- <executable> [arguments...]' \
         'branch <id> <branch> [--base <branch>] [--operation switch|rename]' \
         'curl <id> -- <curl arguments>; access <id> (secret JSON for trusted integrations only)' \

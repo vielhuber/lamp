@@ -86,7 +86,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `./lamp docker-build`                                                   | rebuild the image without layer cache, keep volumes (requires stopped container)    |
 | `./lamp build <id>`                                                     | rerun the configured build of one environment inside the running container          |
 | `./lamp docker-reset`                                                   | **delete all compose volumes**, then rebuild the image (requires stopped container) |
-| `./lamp add [--git <url>] [--id <12-hex>] [--branch <b>] [--base-branch <b>] [--php <v>] [--vpn <name>] [--build "<cmd>"] [--subdomain <label>] [--alias <suffix>]… [--webroot <dir>] [--proxy-port <port>] [--proxy-exclude </path>] [--visibility private\|public]` | create environment, returns json |
+| `./lamp add [--git <url>] [--id <12-hex>] [--branch <b>] [--base-branch <b>] [--php <v>] [--vpn <name>] [--build "<cmd>"] [--subdomain <label>] [--directory <name>] [--alias <suffix>]… [--webroot <dir>] [--proxy-port <port>] [--proxy-exclude </path>] [--visibility private\|public]` | create environment, returns json |
 | `./lamp remove <id>`                                                    | remove environment, owned databases, runtime data; dynamic project directory only   |
 | `./lamp list [--search <term>]`                                         | all environments as json; `--search` filters case-insensitively over all values     |
 | `./lamp show <id>`                                                      | one environment as json                                                             |
@@ -246,6 +246,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `branch`        | null    | null selects the repository default branch                                                     |
 | `subdomain`     | required | one lowercase label or a list; first label is the primary host and the static project path    |
 | `aliases`       | omitted | suffixes: `<primary>-<suffix>.<domain>` share the same checkout and databases                  |
+| `directory`     | omitted | folder name under `/var/www` when it differs from the first subdomain, e.g. `aistats` for `ai` |
 | `webroot`       | null    | directory relative to the checkout; null picks `public/` or `web/` with `index.php`, else root |
 | `php`           | omitted | explicit version; omitted reads the repository root `.phprc`, else `8.5`                       |
 | `vpn`           | null    | required tunnel name from `config.yaml`                                                        |
@@ -254,7 +255,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `visibility`    | private | `public` adds a cloudflare access bypass for exactly this environment's hostnames              |
 | `build`         | omitted | inline build; omitted uses `.data/build/<host>-<owner>-<repo>.sh` if present; `':'` for no-op  |
 
-- project path: `/var/www/<first subdomain>` for static environments, `/var/www/_environments/<id>` for dynamic ones; the same path on host and container
+- project path: `/var/www/<directory or first subdomain>` for static environments, `/var/www/_environments/<id>` for dynamic ones; the same path on host and container
 - existing directories are adopted without clone, pull, checkout or chown; missing directories are cloned
 - `remove` deletes the project directory only for dynamic environments; static directories always stay
 - hostnames: `<subdomain-or-id>.<domain>`; every hostname must be unique; `phpmyadmin` is reserved; no nested subdomains
@@ -442,8 +443,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>cliproxyapi</summary>
 
 - started by supervisor when `.data/cliproxyapi/config.yaml` exists; use `auth-dir: /var/lib/lamp/cliproxyapi/auth`
-- logins via `./lamp ssh`: `cli-proxy-api --config /var/lib/lamp/cliproxyapi/config.yaml --codex-login --no-browser` (`--claude-login`, `--antigravity-login` likewise); antigravity's callback port `51121` is not published
-- expose through a project: `subdomain: ai`, `proxy_port: 8317`, `proxy_exclude: /admin`; optional host access via `127.0.0.1:8317:8317` in the compose override
+- provider logins are documented in the [aistats readme](https://github.com/vielhuber/aistats); run them inside `./lamp ssh`; antigravity's callback port `51121` is not published
+- expose through a project: `subdomain: ai`, `directory: aistats`, `proxy_port: 8317`, `proxy_exclude: /admin`; optional host access via `127.0.0.1:8317:8317` in the compose override
 - stop any host cliproxyapi unit before running the container instance against the same oauth accounts
 
 </details>

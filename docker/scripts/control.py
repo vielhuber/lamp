@@ -28,7 +28,7 @@ ENABLED = Path("/etc/apache2/sites-enabled")
 APACHE_SETTINGS = Path("/etc/apache2/conf-available/lamp.conf")
 MAILNAME = Path("/etc/mailname")
 PHP_VERSIONS = ("5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5")
-ENVIRONMENT_DEFAULTS = {"branch": None, "subdomain": None, "aliases": None, "webroot": None, "php": None,
+ENVIRONMENT_DEFAULTS = {"branch": None, "subdomain": None, "aliases": None, "directory": None, "webroot": None, "php": None,
                         "vpn": None, "proxy_port": None, "proxy_exclude": None, "visibility": "private", "build": None}
 
 
@@ -130,7 +130,7 @@ def migrate_specification(value):
 
 def validate_specification(value):
     if not isinstance(value, dict) or set(value) - {"git", *ENVIRONMENT_DEFAULTS}:
-        raise ValueError("Environment settings must contain only git, branch, php, build, subdomain, aliases, webroot, proxy_port, proxy_exclude, vpn and visibility.")
+        raise ValueError("Environment settings must contain only git, branch, php, build, subdomain, aliases, directory, webroot, proxy_port, proxy_exclude, vpn and visibility.")
     value = {**ENVIRONMENT_DEFAULTS, **value}
     if value["visibility"] is None:
         value["visibility"] = "private"
@@ -148,7 +148,10 @@ def validate_specification(value):
         build_script(value["git"])
     if value["php"] is not None and value["php"] not in PHP_VERSIONS:
         raise ValueError("Invalid PHP version; quote PHP versions in YAML.")
-    subdomain_labels(value)
+    labels = subdomain_labels(value)
+    if value["directory"] is not None and (not labels or not isinstance(value["directory"], str)
+                                           or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", value["directory"])):
+        raise ValueError("directory must be a lowercase folder name under /var/www and requires a subdomain.")
     for key in ("branch", "build", "webroot"):
         if value[key] is not None and (not isinstance(value[key], str) or not value[key] or "\0" in value[key]):
             raise ValueError("branch, build and webroot must be nonempty strings or null.")
@@ -270,7 +273,7 @@ def hostnames(environment):
 def project_path(identity, value):
     validate_identity(identity)
     labels = subdomain_labels(value)
-    project = PROJECTS / labels[0] if labels else PROJECTS / "_environments" / identity
+    project = PROJECTS / (value.get("directory") or labels[0]) if labels else PROJECTS / "_environments" / identity
     if project.resolve() != project.absolute():
         raise ValueError("Project paths must not contain symlinks.")
     return project
@@ -295,7 +298,7 @@ def validate_domains(desired, settings):
 
 def ordered_settings(settings):
     return {key: settings.get(key) for key in ("git", *ENVIRONMENT_DEFAULTS)
-            if key not in ("php", "build", "aliases") or settings.get(key) is not None}
+            if key not in ("php", "build", "aliases", "directory") or settings.get(key) is not None}
 
 
 def write_desired(entries, original):
@@ -861,7 +864,7 @@ def add(arguments, settings, identity, current=None):
     environment = {
         **(current or {}),
         "id": identity, "git": arguments.git, "branch": arguments.branch, "php": arguments.php,
-        "build": arguments.build, "subdomain": arguments.subdomain, "aliases": desired["aliases"],
+        "build": arguments.build, "subdomain": arguments.subdomain, "aliases": desired["aliases"], "directory": desired["directory"],
         "hostnames": environment_hostnames(identity, desired, settings), "vpn": arguments.vpn, "visibility": desired["visibility"],
         "webroot": arguments.webroot, "proxy_port": arguments.proxy_port, "proxy_exclude": arguments.proxy_exclude,
         "hostname": hostname, "url": url, "path": str(project),
@@ -1022,6 +1025,7 @@ def main():
     create.add_argument("--vpn")
     create.add_argument("--build")
     create.add_argument("--subdomain")
+    create.add_argument("--directory")
     create.add_argument("--alias", dest="aliases", action="append")
     create.add_argument("--webroot")
     create.add_argument("--proxy-port", type=int)

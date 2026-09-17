@@ -23,6 +23,19 @@ class HostnamesTest(unittest.TestCase):
             self.assertEqual(Path(directory) / 'site', control.project_path(identity, value))
             self.assertEqual(control.project_path(identity, {'subdomain': 'site'}), control.project_path(identity, value))
 
+    def test_directory_changes_the_project_path_but_not_the_hostname(self):
+        value = control.validate_specification({'subdomain': 'ai', 'directory': 'aistats'})
+        settings = {'domain': 'example.test'}
+        self.assertEqual('https://ai.example.test', control.environment_url('abcdef012345', value, settings))
+        with tempfile.TemporaryDirectory() as directory, patch.object(control, 'PROJECTS', Path(directory)):
+            self.assertEqual(Path(directory) / 'aistats', control.project_path('abcdef012345', value))
+        self.assertNotIn('directory', control.ordered_settings(control.validate_specification({'subdomain': 'ai'})))
+        self.assertEqual('aistats', control.ordered_settings(value)['directory'])
+        for settings in [{'directory': 'aistats'}, {'subdomain': 'ai', 'directory': 'Ai Stats'}, {'subdomain': 'ai', 'directory': '../x'},
+                         {'subdomain': 'ai', 'directory': ''}, {'subdomain': 'ai', 'directory': 42}]:
+            with self.subTest(settings=settings), self.assertRaises(ValueError):
+                control.validate_specification(settings)
+
     def test_invalid_subdomain_lists_are_rejected(self):
         for labels in [[], [''], ['valid', None], ['valid', 42], ['valid', []], ['valid', 'UPPER'],
                        ['valid', 'a.b'], ['valid', '../path'], ['valid', 'line\nHost'],
