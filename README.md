@@ -15,7 +15,6 @@ a portable development machine in one ubuntu 26.04 docker container: apache, twe
 - `bash`, `git`, `python3`, `flock`, `sha256sum`, `readlink` on the host
 - `/dev/net/tun` on the host (vpn support)
 - a locally managed [cloudflare tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) with proxied wildcard dns `*.<domain>` and a cloudflare access application for `*.<domain>`
-- a github personal access token with `read:packages` for the private image
 
 </details>
 
@@ -29,7 +28,6 @@ a portable development machine in one ubuntu 26.04 docker container: apache, twe
 
 <summary>1. pull image</summary>
 
-- `echo "<GITHUB_PERSONAL_ACCESS_TOKEN>" | docker login ghcr.io -u vielhuber --password-stdin`
 - `docker pull ghcr.io/vielhuber/lamp:latest`
 
 </details>
