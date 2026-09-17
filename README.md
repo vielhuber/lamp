@@ -14,7 +14,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - [docker](https://docs.docker.com/engine/install/ubuntu/) `>= 20.10.0` with the compose plugin
 - `bash`, `git`, `python3`, `flock`, `sha256sum`, `readlink` on the host
 - `/dev/net/tun` on the host (vpn support)
-- a locally managed [cloudflare tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) with proxied wildcard dns `*.<domain>` and a cloudflare access application for `*.<domain>`
+- a cloudflare account with the dns zone of `<domain>` and [cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/) on the host; tunnel and access are set up during installation
 
 </details>
 
@@ -40,9 +40,33 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init` (copies `lamp` and `docker/docker-compose.yml` out of the image)
 - `./lamp setup` (creates `.data` with a commented `config.yaml`, an empty `environments.yaml` and example files for syncdb, build scripts and the access service token; never overwrites)
 - set `domain` in `.data/config.yaml`
-- `install -m 600 ~/.cloudflared/<TUNNEL_UUID>.json .data/cloudflare/cloudflared-credentials.json` (see [cloudflare](#cloudflare))
 - put ssh keys into `.data/ssh/`, syncdb profiles into `.data/syncdb/`, build scripts into `.data/build/`
 - optional: `sudo ln -s "$(pwd -P)/lamp" /usr/local/bin/lamp`
+
+</details>
+
+<details>
+
+<summary>3. cloudflare tunnel</summary>
+
+- reuse an existing locally managed tunnel or create one with `cloudflared tunnel create lamp`; only its credentials json is needed, no `cert.pem` and no api token for the tunnel itself
+- once: proxied wildcard cname `*.<domain>` → `<TUNNEL_UUID>.cfargotunnel.com`, or `cloudflared tunnel route dns <TUNNEL> '*.<domain>'`
+- `install -m 600 ~/.cloudflared/<TUNNEL_UUID>.json .data/cloudflare/cloudflared-credentials.json`
+- `sudo systemctl disable --now cloudflared` on the host; never run the same tunnel from two machines
+
+</details>
+
+<details>
+
+<summary>4. cloudflare access</summary>
+
+- zero trust › `Access controls › Applications › Add an application › Self-hosted`: name `lamp`, public hostname `*.<domain>`, all paths
+- policy 1, developer login: `Allow`, `Include › Emails` with your cloudflare login email, `Require › Login Methods › Cloudflare`; the cloudflare identity provider under `Integrations › Identity providers` must have `Restrict to account members` enabled
+- policy 2, harness: `Access controls › Service credentials › Service Tokens › Create` a token, then `Service Auth`, `Include › Service Token` selecting it; never `Bypass` or `Allow › Everyone` on this application
+- `cp .data/cloudflare/cloudflare-service-token.yaml.example .data/cloudflare/cloudflare-service-token.yaml` and fill in `CF-Access-Client-Id` and `CF-Access-Client-Secret` of that token (mode 600)
+- management token: [my profile › api tokens](https://dash.cloudflare.com/profile/api-tokens) › `Create Custom Token` › `Account › Access: Apps and Policies › Edit`, scoped to the one account, with an expiry
+- `touch .data/cloudflare/cloudflare-api-token && chmod 600 .data/cloudflare/cloudflare-api-token && nano .data/cloudflare/cloudflare-api-token`; paste only the token on one line, no `Bearer`, no quotes, never into a shell command or chat
+- without these two files and the wildcard application `add`, `start` and `restart` refuse to serve environments
 
 </details>
 
@@ -123,7 +147,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>2. configure instance</summary>
 
-- same as [installation › configure instance](#installation), minus the `init` step
+- same as [installation](#installation) steps 2 to 4, minus the `init` step
 
 </details>
 
@@ -336,10 +360,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>tunnel</summary>
 
-- reuse an existing locally managed tunnel; only its credentials json is needed (no `cert.pem`, no api token for the tunnel itself)
-- once: proxied wildcard cname `*.<domain>` → `<TUNNEL_UUID>.cfargotunnel.com`, or `cloudflared tunnel route dns <TUNNEL> '*.<domain>'`
-- `mkdir -m 700 -p .data/cloudflare && install -m 600 ~/.cloudflared/<TUNNEL_UUID>.json .data/cloudflare/cloudflared-credentials.json`
-- `sudo systemctl disable --now cloudflared` on the host before starting lamp; never run the same tunnel from two machines
+- setup: [installation › 3. cloudflare tunnel](#installation)
 - supervisor runs `cloudflared` inside the container; the wildcard ingress forwards `*.<domain>` to apache's internal listener `127.0.0.1:8081`, everything else gets 404
 - without the credentials file `start` works but `add` and configured environments are refused
 - `domain` changes in `config.yaml` reapply all environments on the next `start` / `restart`
@@ -350,7 +371,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>access</summary>
 
-- in zero trust: one self-hosted application for `*.<domain>` with an `allow` policy for your cloudflare login (identity provider cloudflare, restricted to account members, `Require › Login Methods › Cloudflare`) and a `service auth` policy for the harness token; never `bypass` or `allow everyone` on the wildcard
+- setup: [installation › 4. cloudflare access](#installation); the wildcard application, its two policies, the service token and the management token are mandatory
 - customers: a separate application per exact hostname with an `allow` policy for their exact emails via one-time pin; revoke sessions when withdrawing access
 - session tip: global session one month, application session 24 hours, developer policy `same as application`
 - `visibility: public` creates `lamp-public:<domain>:<id>` with a `bypass › everyone` policy for exactly the environment's hostnames; private removes it; the wildcard stays untouched
@@ -375,10 +396,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>management api token</summary>
 
-- needed for `add`, `remove`, `start`, `restart` (protection check and bypass management), also for private environments
-- [my profile › api tokens](https://dash.cloudflare.com/profile/api-tokens) › custom token › `Account › Access: Apps and Policies › Edit`, scoped to the one account, with an expiry
-- `touch .data/cloudflare/cloudflare-api-token && chmod 600 .data/cloudflare/cloudflare-api-token && nano .data/cloudflare/cloudflare-api-token`
-- paste only the token on one line, no `Bearer`, no quotes; never put it into a shell command or chat
+- created during [installation › 4. cloudflare access](#installation); needed for `add`, `remove`, `start`, `restart` (protection check and bypass management), also for private environments
+- rotate it before it expires; the tunnel credentials, the service token and this token are three different credentials
 
 </details>
 
@@ -386,10 +405,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>service token (harness)</summary>
 
-- zero trust › `Access controls › Service credentials › Service Tokens` › create; add `service auth › include › service token` to the wildcard application
-
-- `./lamp setup` writes `.data/cloudflare/cloudflare-service-token.yaml.example`; copy it to `cloudflare-service-token.yaml` (mode 600) and fill in `CF-Access-Client-Id` and `CF-Access-Client-Secret`
-
+- created during [installation › 4. cloudflare access](#installation)
 - `./lamp curl <id> -- -fsS https://<hostname>/` and the `curl` wrapper inside `exec --environment` send the headers only to that environment's exact https origin, never follow redirects with credentials, and refuse unsupported options
 - `./lamp access <id>` prints origin and headers as json for trusted integrations; keep it out of visible tool calls and logs
 - public environments send no token; their own application logins still apply
