@@ -57,7 +57,7 @@ def validate_identity(identity):
 
 def configuration():
     value = yaml.safe_load((CONFIGURATION / "config.yaml").read_text())
-    sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname",)}
+    sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname", "relayhost")}
     if (not isinstance(value, dict) or "domain" not in value or set(value) - {"domain", "vpn", *sections}
             or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", *sections))):
         raise ValueError("config.yaml must contain domain and optionally git, apache, postfix and vpn mappings; see README.md.")
@@ -69,9 +69,10 @@ def configuration():
         entries = value.get(section) or {}
         if (set(entries) - set(keys)
                 or any(not isinstance(entry, str) or not entry.strip() or re.search(r"[\r\n\0]", entry) for entry in entries.values())
-                or any(re.search(r"\s", entries[key]) for key in ("admin", "hostname") if key in entries)
-                or ("hostname" in entries and not re.fullmatch(dns_name, entries["hostname"]))):
-            raise ValueError(f"{section} may contain only {', '.join(keys)} as nonempty single-line values; hostname must be a lowercase DNS name.")
+                or any(re.search(r"\s", entries[key]) for key in ("admin", "hostname", "relayhost") if key in entries)
+                or ("hostname" in entries and not re.fullmatch(dns_name, entries["hostname"]))
+                or ("relayhost" in entries and not re.fullmatch(r"\[?[A-Za-z0-9.-]+\]?(?::[0-9]{1,5})?", entries["relayhost"]))):
+            raise ValueError(f"{section} may contain only {', '.join(keys)} as nonempty single-line values; hostname must be a lowercase DNS name, relayhost a host or [host]:port.")
     return value
 
 
@@ -86,7 +87,8 @@ def apply_settings(settings):
     APACHE_SETTINGS.write_text(f"Timeout 3000\nServerAdmin {admin}\nServerName localhost\n")
     hostname = (settings.get("postfix") or {}).get("hostname", "lamp.localdomain")
     MAILNAME.write_text(hostname + "\n")
-    run(["postconf", "-e", "myhostname = " + hostname])
+    relayhost = (settings.get("postfix") or {}).get("relayhost", "")
+    run(["postconf", "-e", "myhostname = " + hostname, "relayhost = " + relayhost])
 
 
 def load_environment(identity):

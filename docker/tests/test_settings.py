@@ -29,19 +29,22 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual({'name': 'Jane Doe', 'email': 'jane@example.test'}, settings['git'])
         (self.root / 'config.yaml').write_text('domain: example.test\ngit: null\n')
         self.assertIsNone(control.configuration()['git'])
+        (self.root / 'config.yaml').write_text('domain: example.test\npostfix:\n  relayhost: "[smtp.example.test]:587"\n')
+        self.assertEqual('[smtp.example.test]:587', control.configuration()['postfix']['relayhost'])
         for text in ['git: {nickname: x}', 'git: {name: ""}', 'git: {name: "a\\nb"}', 'git: [name]', 'apache: {admin: "a b"}',
-                     'postfix: {hostname: "Mail.Example"}', 'postfix: {hostname: "a b.test"}', 'unknown: 1']:
+                     'postfix: {hostname: "Mail.Example"}', 'postfix: {hostname: "a b.test"}', 'postfix: {relayhost: "smtp host"}',
+                     'postfix: {relayhost: "smtp://x"}', 'unknown: 1']:
             with self.subTest(text=text), self.assertRaises(ValueError):
                 (self.root / 'config.yaml').write_text('domain: example.test\n' + text + '\n')
                 control.configuration()
 
     def test_settings_are_applied_and_fall_back_to_defaults(self):
         control.apply_settings({'domain': 'example.test', 'git': {'name': 'Jane Doe', 'email': 'jane@example.test'},
-                                'apache': {'admin': 'admin@example.test'}, 'postfix': {'hostname': 'mail.example.test'}})
+                                'apache': {'admin': 'admin@example.test'}, 'postfix': {'hostname': 'mail.example.test', 'relayhost': '[smtp.example.test]:587'}})
         commands = [call.args[0] for call in self.run.call_args_list]
         self.assertIn(['git', 'config', '--global', 'user.name', 'Jane Doe'], commands)
         self.assertIn(['git', 'config', '--global', 'user.email', 'jane@example.test'], commands)
-        self.assertIn(['postconf', '-e', 'myhostname = mail.example.test'], commands)
+        self.assertIn(['postconf', '-e', 'myhostname = mail.example.test', 'relayhost = [smtp.example.test]:587'], commands)
         self.assertEqual('Timeout 3000\nServerAdmin admin@example.test\nServerName localhost\n', control.APACHE_SETTINGS.read_text())
         self.assertEqual('mail.example.test\n', control.MAILNAME.read_text())
         self.run.reset_mock()
@@ -51,7 +54,7 @@ class SettingsTest(unittest.TestCase):
         self.assertFalse(any(call.args[0][:2] == ['git', 'config'] for call in self.run.call_args_list))
         self.assertEqual('Timeout 3000\nServerAdmin webmaster@localhost\nServerName localhost\n', control.APACHE_SETTINGS.read_text())
         self.assertEqual('lamp.localdomain\n', control.MAILNAME.read_text())
-        self.assertIn(['postconf', '-e', 'myhostname = lamp.localdomain'], [call.args[0] for call in self.run.call_args_list])
+        self.assertIn(['postconf', '-e', 'myhostname = lamp.localdomain', 'relayhost = '], [call.args[0] for call in self.run.call_args_list])
 
 
 if __name__ == '__main__':

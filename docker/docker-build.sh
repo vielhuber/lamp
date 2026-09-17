@@ -224,7 +224,7 @@ apt-get install -y ./powershell.deb
 step 'postfix'
 printf 'postfix postfix/mailname string lamp.localdomain\npostfix postfix/main_mailer_type select Internet Site\n' | debconf-set-selections
 apt-get install -y postfix mailutils libsasl2-modules
-postconf -e 'myhostname = lamp.localdomain' 'mydestination =' 'relayhost = [sslout.df.eu]:587' \
+postconf -e 'myhostname = lamp.localdomain' 'mydestination =' 'relayhost =' \
     'smtp_sasl_auth_enable = yes' 'smtp_sasl_security_options = noanonymous' \
     'smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd' 'smtp_tls_security_level = may' \
     'smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt' 'inet_protocols = ipv4' \

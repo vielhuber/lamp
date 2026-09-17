@@ -38,7 +38,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `mkdir lamp && cd lamp`
 - `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init` (copies `lamp` and `docker/docker-compose.yml` out of the image)
-- `./lamp setup` (creates `.data` with a commented `config.yaml`, an empty `environments.yaml` and example files for syncdb, build scripts and the access service token; never overwrites)
+- `./lamp setup` (creates `.data` with a commented `config.yaml`, an empty `environments.yaml`, example files for syncdb, build scripts and the access service token, and `docker/docker-compose.override.yml` with the projects mount; never overwrites)
+- optional: change the host side of the projects mount in `docker/docker-compose.override.yml`; the container side stays `/var/www`
 - set `domain` in `.data/config.yaml`
 - put ssh keys into `.data/ssh/`, syncdb profiles into `.data/syncdb/`, build scripts into `.data/build/`
 - optional: `sudo ln -s "$(pwd -P)/lamp" /usr/local/bin/lamp`
@@ -101,7 +102,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 | command                                                                 | effect                                                                              |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `./lamp setup`                                                          | create `.data` with commented presets and example files; keeps existing files       |
+| `./lamp setup`                                                          | create `.data` with commented presets, example files and the compose override; keeps existing files |
 | `./lamp start`                                                          | start container, wait for health, apply `.data/environments.yaml`                   |
 | `./lamp restart`                                                        | validate yaml, stop, start, apply                                                   |
 | `./lamp stop`                                                           | stop container, keep all data                                                       |
@@ -214,6 +215,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | path                      | contents                                                                          | survives `docker-reset` |
 | ------------------------- | --------------------------------------------------------------------------------- | ---------------- |
 | `.data/config.yaml`       | `domain`, optional `git`, `apache`, `postfix`, `vpn` (mode 600)                   | yes              |
+| `docker/docker-compose.override.yml` | host-specific: projects mount, extra mounts and ports (gitignored)    | yes              |
 | `.data/environments.yaml` | desired environments (mode 600)                                                   | yes              |
 | `.data/build/*.sh`        | shared repository build scripts (mode 600)                                        | yes              |
 | `.data/syncdb/*.json`     | original syncdb profiles (mode 600)                                               | yes              |
@@ -223,7 +225,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `.data/ca/`               | local ca for direct-origin https                                                  | yes              |
 | `.data/vpn/`              | openvpn / wireguard profiles                                                      | yes              |
 | `.logs/`                  | host-side command logs                                                            | yes              |
-| `/var/www`                | project checkouts (host bind mount)                                               | yes              |
+| `/var/www`                | project checkouts; host directory set in `docker/docker-compose.override.yml`     | yes              |
 | compose volumes           | mysql, postgresql, redis, apache sites, mail, certificates, `/var/lib/lamp` state | **no**           |
 
 - `.data` is mounted at `/etc/lamp`, `.data/ssh` at `/root/.ssh`, `.data/cliproxyapi` at `/var/lib/lamp/cliproxyapi`
@@ -245,6 +247,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `git.name`, `git.email` | unset                 | global git identity inside the container for commits made through `exec` or `ssh`            |
 | `apache.admin`          | `webmaster@localhost` | `ServerAdmin` of the shared apache configuration                                             |
 | `postfix.hostname`      | `lamp.localdomain`    | `myhostname` and `/etc/mailname` of the container's postfix                                  |
+| `postfix.relayhost`     | empty (direct delivery) | postfix `relayhost`, e.g. `[smtp.example.com]:587`; credentials in `/etc/postfix/sasl_passwd` through a mount in the compose override |
 | `vpn`                   | disabled              | see [vpn](#vpn)                                                                              |
 
 - all values are applied on every container start, so a pulled image and a locally built image behave the same; edit the file and run `./lamp restart`
