@@ -164,8 +164,8 @@ def validate_specification(value):
         raise ValueError("Invalid PHP version; quote PHP versions in YAML.")
     labels = subdomain_labels(value)
     if value["directory"] is not None and (not labels or not isinstance(value["directory"], str)
-                                           or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", value["directory"])):
-        raise ValueError("directory must be a lowercase folder name under /var/www and requires a subdomain.")
+                                           or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}(?:/[a-z0-9][a-z0-9_-]{0,62}){0,3}", value["directory"])):
+        raise ValueError("directory must be a lowercase folder path under /var/www without parent segments and requires a subdomain.")
     for key in ("branch", "build", "webroot"):
         if value[key] is not None and (not isinstance(value[key], str) or not value[key] or "\0" in value[key]):
             raise ValueError("branch, build and webroot must be nonempty strings or null.")

@@ -290,7 +290,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `branch`        | null    | null selects the repository default branch                                                     |
 | `subdomain`     | required | one lowercase label or a list; first label is the primary host and the static project path    |
 | `aliases`       | omitted | suffixes: `<primary>-<suffix>.<domain>` share the same checkout and databases                  |
-| `directory`     | omitted | folder name under `/var/www` when it differs from the first subdomain, e.g. `aistats` for `ai` |
+| `directory`     | omitted | folder under `/var/www` when it differs from the first subdomain, e.g. `aistats` for `ai`; may be nested like `tourconcept/new` |
 | `webroot`       | null    | directory relative to the checkout; null picks `public/` or `web/` with `index.php`, else root |
 | `php`           | omitted | explicit version; omitted reads the repository root `.phprc`, else `8.5`                       |
 | `vpn`           | null    | required tunnel name from `config.yaml`                                                        |
