@@ -346,7 +346,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - mysql and sqlite only, no postgresql; imports use the scoped environment account, syncdb rewrites object definers to it
 - a successful import exports `DB_CONNECTION` and `DB_DATABASE` into the running build and `setup.env`; do not call it in a subshell
 - every executed `syncdb` imports again; an unchanged start does not run the build at all
-- the image installs the latest syncdb release and applies `docker/patches/syncdb.patch` on top until the next release ships it: object definers are reset to the importing account and `ALTER DATABASE` charset statements in routine dumps are remapped to the target database
+- syncdb `>= 2.1.3` resets object definers to the importing account and remaps `ALTER DATABASE` charset statements in routine dumps to the target database
 
 </details>
 

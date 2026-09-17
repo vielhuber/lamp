@@ -3,7 +3,6 @@ FROM ubuntu:26.04
 WORKDIR /app
 
 COPY --chmod=755 docker/docker-build.sh ./
-COPY docker/patches/ /opt/lamp/patches/
 COPY docker/git-hooks/ /opt/lamp/git-hooks/
 
 RUN --mount=type=cache,id=lamp-apt,target=/var/cache/apt,sharing=locked \

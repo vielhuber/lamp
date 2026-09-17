@@ -13,8 +13,6 @@ docker/scripts/*
 !docker/scripts/curl.py
 !docker/scripts/healthcheck.sh
 !docker/scripts/vpn.py
-!docker/patches/
-!docker/patches/**
 !docker/git-hooks/
 docker/git-hooks/*
 !docker/git-hooks/pre-commit
