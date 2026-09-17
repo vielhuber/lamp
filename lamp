@@ -4,16 +4,12 @@ set -euo pipefail
 directory=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 command=${1:-help}
 if (( $# )); then shift; fi
-environment_build=false
-if [[ "$command" = build && $# -eq 1 ]]; then environment_build=true; fi
-ensure=false
 json=false
-if [[ "$command" = start && "${1:-}" = --ensure ]]; then ensure=true; shift; fi
 if [[ "$command" = status || "$command" = version ]] && [[ "${1:-}" = --json ]]; then json=true; shift; fi
 if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
-    printf '%s\n' 'Usage: lamp setup|build [<id>]|reset|start [--ensure]|restart|stop|status [--json]|version [--json]|add|remove <id>|list [--search <term>]|show <id>|ssh|exec "command"' \
+    printf '%s\n' 'Usage: lamp setup|docker-build|docker-reset|build <id>|start|restart|stop|status [--json]|version [--json]|add|remove <id>|list [--search <term>]|show <id>|ssh|exec "command"' \
         'setup creates .data with a commented config.yaml, an empty environments.yaml and example files for syncdb, build scripts and the Access service token; existing files are kept.' \
-        'build <id> reruns the configured build of an existing environment inside the running container; build without ID rebuilds the image without layer cache.' \
+        'build <id> reruns the configured build of an existing environment inside the running container; docker-build rebuilds the image without layer cache.' \
         'list --search <term> returns only environments whose values contain the term (case-insensitive).' \
         'add [--git <repository>] [--id <12-hex-id>] [--branch <branch>] [--base-branch <branch>] [--php <version>] [--vpn <profile>] [--build <command>] [--subdomain <label>] [--alias <suffix> ...] [--webroot <directory>] [--proxy-port <port>] [--proxy-exclude <path>] [--visibility private|public]' \
         'exec --environment <id> -- <executable> [arguments...]' \
@@ -23,12 +19,12 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
         'Each --alias adds <subdomain-or-id>-<suffix>.<domain> to the same environment; show includes all URLs.' \
         'Without --build, .data/build/<host>-<repository-path-with-hyphens>.sh is used if it exists.' \
         'For isolated database imports, use --build "syncdb <profile> && <setup commands>".' \
-        'WARNING: reset requires a stopped container and removes the containers AND ALL Compose volumes before rebuilding without layer cache; build keeps the volumes.'
+        'WARNING: docker-reset requires a stopped container and removes the containers AND ALL Compose volumes before rebuilding without layer cache; docker-build keeps the volumes.'
     exit 0
 fi
 case "$command" in
-    setup|reset|start|restart|stop|status|version|ssh) test "$#" -eq 0 ;;
-    build) test "$#" -le 1 ;;
+    setup|docker-build|docker-reset|start|restart|stop|status|version|ssh) test "$#" -eq 0 ;;
+    build) test "$#" -eq 1 ;;
     list) test "$#" -eq 0 || [[ "$#" = 2 && "$1" = --search ]] ;;
     remove|show|access) test "$#" -eq 1 ;;
     exec|curl|branch) ;;
@@ -156,7 +152,7 @@ PRESET
     printf '%s\n' 'next: set domain in .data/config.yaml, install .data/cloudflare/cloudflared-credentials.json and cloudflare-api-token, then ./lamp start'
     exit 0
 fi
-if [[ ( "$command" = build && "$environment_build" = false ) || "$command" = reset || "$command" = restart || ( "$command" = start && "$ensure" = false ) ]]; then
+if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = start || "$command" = restart ]]; then
     mkdir -p "$directory/.logs"
     chmod 700 "$directory/.logs"
     log_file=$(mktemp "$directory/.logs/$command-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX.log")
@@ -247,31 +243,17 @@ if [[ "$command" = start || "$command" = add ]] && ! git config --global --get-a
     git config --global --add safe.directory '*'
 fi
 case "$command" in
-    build|reset|start|restart|stop|add|remove)
+    build|docker-build|docker-reset|start|restart|stop|add|remove)
         lock_identity=$(printf '%s' "$directory" | sha256sum)
         exec 9>> "/tmp/lamp-${lock_identity%% *}.lock"
         flock 9
         ;;
 esac
-if $environment_build; then
-    "${compose[@]}" exec -T app python3 /opt/lamp/control.py build "$1"
-    exit
-fi
 case "$command" in
-    build|reset|start|restart|stop)
+    docker-build|docker-reset|start|restart|stop)
         container_state=$("${compose[@]}" ps --all --format '{{.State}}' app)
         case "$container_state" in
             running|restarting|paused)
-                if [[ "$command" = start ]] && $ensure; then
-                    for attempt in $(seq 1 120); do
-                        health=$("${compose[@]}" ps --all --quiet app | xargs docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}')
-                        if [[ "$health" = healthy ]]; then exit 0; fi
-                        if [[ "$health" = unhealthy ]]; then printf '%s\n' 'LAMP is unhealthy.' >&2; exit 1; fi
-                        sleep 2
-                    done
-                    printf '%s\n' 'LAMP readiness timed out.' >&2
-                    exit 1
-                fi
                 if [[ "$command" != stop && "$command" != restart ]]; then
                     printf 'Cannot %s: LAMP is already active. Run lamp stop first.\n' "$command" >&2
                     exit 1
@@ -288,8 +270,8 @@ case "$command" in
         ;;
 esac
 case "$command" in
-    build) "${compose[@]}" build --no-cache ;;
-    reset)
+    docker-build) "${compose[@]}" build --no-cache ;;
+    docker-reset)
         terminal_type=${TERM:-xterm}
         if [[ "$terminal_type" = dumb ]]; then terminal_type=xterm; fi
         TERM="$terminal_type" clear >&3 && "${compose[@]}" down --volumes && "${compose[@]}" build --no-cache

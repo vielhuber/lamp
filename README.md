@@ -79,15 +79,14 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `./lamp setup`                                                          | create `.data` with commented presets and example files; keeps existing files       |
 | `./lamp start`                                                          | start container, wait for health, apply `.data/environments.yaml`                   |
-| `./lamp start --ensure`                                                 | start if stopped, otherwise wait for health; no restart, no log file                |
 | `./lamp restart`                                                        | validate yaml, stop, start, apply                                                   |
 | `./lamp stop`                                                           | stop container, keep all data                                                       |
 | `./lamp status [--json]`                                                | container state, health, ports, supervised services                                 |
 | `./lamp version [--json]`                                               | host checkout version and container image id                                        |
-| `./lamp build`                                                          | rebuild the image without layer cache, keep volumes (requires stopped container)    |
+| `./lamp docker-build`                                                   | rebuild the image without layer cache, keep volumes (requires stopped container)    |
 | `./lamp build <id>`                                                     | rerun the configured build of one environment inside the running container          |
-| `./lamp reset`                                                          | **delete all compose volumes**, then rebuild the image (requires stopped container) |
-| `./lamp add [options]`                                                  | create environment, returns json                                                    |
+| `./lamp docker-reset`                                                   | **delete all compose volumes**, then rebuild the image (requires stopped container) |
+| `./lamp add [--git <url>] [--id <12-hex>] [--branch <b>] [--base-branch <b>] [--php <v>] [--vpn <name>] [--build "<cmd>"] [--subdomain <label>] [--alias <suffix>]… [--webroot <dir>] [--proxy-port <port>] [--proxy-exclude </path>] [--visibility private\|public]` | create environment, returns json |
 | `./lamp remove <id>`                                                    | remove environment, owned databases, runtime data; dynamic project directory only   |
 | `./lamp list [--search <term>]`                                         | all environments as json; `--search` filters case-insensitively over all values     |
 | `./lamp show <id>`                                                      | one environment as json                                                             |
@@ -97,11 +96,6 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `./lamp curl <id> -- <curl args>`                                       | curl the environment's exact https origin with the access service token             |
 | `./lamp access <id>`                                                    | origin and access headers as json; secret, for trusted integrations only            |
 | `./lamp ssh`                                                            | interactive root shell in the container                                             |
-
-- `add` options: `--git <url>` `--id <12-hex>` `--branch <b>` `--base-branch <b>` `--php <v>` `--vpn <name>` `--build "<cmd>"` `--subdomain <label>` `--alias <suffix>` (repeatable) `--webroot <dir>` `--proxy-port <port>` `--proxy-exclude </path>` `--visibility private|public`
-- `build`, `reset`, `start` and `restart` write a timestamped log to `.logs/`
-- `build`, `reset`, `start`, `restart`, `stop`, `add`, `remove` share one host lock at `/tmp/lamp-<sha256 of checkout path>.lock`
-- `build` and `reset` refuse while the container runs; `stop` refuses when it does not
 
 </details>
 
@@ -137,7 +131,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>3. build image</summary>
 
-- `./lamp build`
+- `./lamp docker-build`
 - `./lamp start`
 
 </details>
@@ -148,17 +142,17 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `./lamp stop`
 - `git pull`
-- `./lamp build`
+- `./lamp docker-build`
 - `./lamp start`
 
 </details>
 
 <details>
 
-<summary>reset</summary>
+<summary>docker-reset</summary>
 
 - `./lamp stop`
-- `./lamp reset` (deletes databases, environment metadata and every other compose volume; `.data` and `/var/www` survive)
+- `./lamp docker-reset` (deletes databases, environment metadata and every other compose volume; `.data` and `/var/www` survive)
 - `./lamp start` (re-registers all environments from `.data/environments.yaml`, including database imports and builds)
 
 </details>
@@ -193,7 +187,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>data layout</summary>
 
-| path                      | contents                                                                          | survives `reset` |
+| path                      | contents                                                                          | survives `docker-reset` |
 | ------------------------- | --------------------------------------------------------------------------------- | ---------------- |
 | `.data/config.yaml`       | `domain`, optional `git`, `apache`, `postfix`, `vpn` (mode 600)                   | yes              |
 | `.data/environments.yaml` | desired environments (mode 600)                                                   | yes              |
@@ -210,7 +204,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `.data` is mounted at `/etc/lamp`, `.data/ssh` at `/root/.ssh`, `.data/cliproxyapi` at `/var/lib/lamp/cliproxyapi`
 - `.data` and `.logs` are excluded from git and from the image
-- back up `.data` and database-consistent dumps separately; `reset` is not an update that preserves environments
+- back up `.data` and database-consistent dumps separately; `docker-reset` is not an update that preserves environments
 - initial mysql root / postgres password: `/var/lib/lamp/secrets/database-password` in the state volume, generated on first start; set your own before the first database initialization with `docker compose -f docker/docker-compose.yml run --rm --no-deps app bash -c 'umask 077; mkdir -p /var/lib/lamp/secrets; read -rsp "password: " p; printf "%s\n" "$p" > /var/lib/lamp/secrets/database-password'`
 
 </details>
@@ -267,7 +261,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - reconciliation: entries without a matching environment are provisioned, including database initialization, imports and the build; environments without a matching entry are removed; a changed build script reruns the build of every environment using it; `[]` removes all static environments, an empty file is invalid
 - `lamp branch <id> <branch>` switches the checkout and updates the entry's `branch` in the file, so the environment keeps matching
 - failed environments keep status `failed` and are not served; fix the yaml and `restart`, or `build <id>`, or `remove`
-- `reset` deletes the runtime state: static environments are re-registered from the file on the next `start`, dynamic environments are gone and their directories under `/var/www/_environments/` become orphans
+- `docker-reset` deletes the runtime state: static environments are re-registered from the file on the next `start`, dynamic environments are gone and their directories under `/var/www/_environments/` become orphans
 - `show`, `list`, `add`, `build <id>` return json without passwords or build commands
 
 </details>
@@ -421,7 +415,6 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>automation</summary>
 
-- `lamp start --ensure` is idempotent and safe for scripts
 - `lamp status --json` / `lamp version --json` return `root`, `state`, `healthy`, `api` (cli contract number, currently `1`)
 - `lamp add --id <id> --git <url> --branch <b> --base-branch main` creates or returns the environment; missing remote branches start from `--base-branch`
 - `lamp exec --environment <id> -- bash -c 'npm test'` runs in the checkout with the right php and database variables (use `bash -c`, not a login shell)
@@ -485,7 +478,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>logs and debugging</summary>
 
-- `.logs/<command>-<timestamp>-<random>.log` for `build`, `reset`, `start`, `restart` (ansi stripped, exit code included, container output since the start request appended)
+- `.logs/<command>-<timestamp>-<random>.log` for `docker-build`, `docker-reset`, `start`, `restart` (ansi stripped, exit code included, container output since the start request appended)
 - `./lamp exec 'supervisorctl status'`; php errors in `/var/log/php-error.log`; xdebug profiles in `/tmp/xdebug` (`?XDEBUG_PROFILE=1` or `XDEBUG_PROFILE=1 php …`)
 - vpn client logs in `/var/log/supervisor/vpn-<name>.log`
 - project build logs in `/var/lib/lamp/environments/<id>/build.log`
@@ -500,7 +493,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - `bash -n lamp docker/docker-build.sh docker/docker-entrypoint.sh docker/docker-start.sh docker/scripts/healthcheck.sh`
 - `docker compose -f docker/docker-compose.yml config --quiet`
 - `python3 -m unittest discover -s docker/tests`
-- the container copies `docker/scripts/` to `/opt/lamp/` at image build time; changed scripts need `./lamp build` or a `docker compose cp` into the running container
+- the container copies `docker/scripts/` to `/opt/lamp/` at image build time; changed scripts need `./lamp docker-build` or a `docker compose cp` into the running container
 
 </details>
 
