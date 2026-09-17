@@ -493,7 +493,7 @@ step 'syncdb'
 apt-get install -y sqlite3
 mkdir -p /root/.syncdb
 php8.5 /usr/local/bin/composer --working-dir=/root/.syncdb require --no-interaction 'vielhuber/syncdb:^2.1.2'
-for patch in /opt/lamp/patches/syncdb-routine-database.patch /opt/lamp/patches/syncdb-definer.patch; do
+for patch in /opt/lamp/patches/syncdb.patch; do
     if git -C /root/.syncdb/vendor/vielhuber/syncdb apply --check "$patch"; then
         git -C /root/.syncdb/vendor/vielhuber/syncdb apply "$patch"
     else

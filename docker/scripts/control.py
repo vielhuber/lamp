@@ -677,7 +677,7 @@ def sync_database(environment, profile_name):
     if environment["engine"] == "mysql":
         profile["target"] = {"host": "localhost", "port": "3306", "database": name,
                              "username": name, "password": environment["password"], "ssh": False,
-                             "cmd": "mysql", "sql_log_bin": False, "reset_definer": True}
+                             "cmd": "mysql", "sql_log_bin": False}
     else:
         profile["target"] = {"database": str(STATE / "environments" / environment["id"] / "data" / "database.sqlite"), "ssh": False}
     environment["database"] = profile["target"]["database"]

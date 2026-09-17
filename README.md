@@ -343,10 +343,10 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - original profiles in `.data/syncdb/<profile>.json` (mode 600), visible in the container at `/etc/lamp/syncdb/`
 - `syncdb <profile>` inside a build copies the profile, replaces its complete `target` with the environment's isolated mysql database or sqlite file, imports with php 8.5 in a temporary directory, deletes the copy; `source` and `replace` rules stay unchanged
-- mysql and sqlite only, no postgresql; imports use the scoped environment account with `reset_definer`
+- mysql and sqlite only, no postgresql; imports use the scoped environment account, syncdb rewrites object definers to it
 - a successful import exports `DB_CONNECTION` and `DB_DATABASE` into the running build and `setup.env`; do not call it in a subshell
 - every executed `syncdb` imports again; an unchanged start does not run the build at all
-- the image contains syncdb with a local fix for `ALTER DATABASE` charset remapping in routine dumps
+- the image installs the latest syncdb release and applies `docker/patches/syncdb.patch` on top until the next release ships it: object definers are reset to the importing account and `ALTER DATABASE` charset statements in routine dumps are remapped to the target database
 
 </details>
 

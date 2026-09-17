@@ -1,5 +1,5 @@
 diff --git a/src/syncdb.php b/src/syncdb.php
-index cebddfd..25c44d2 100644
+index cebddfd..3c0c004 100644
 --- a/src/syncdb.php
 +++ b/src/syncdb.php
 @@ -570,8 +570,18 @@ final class syncdb
@@ -22,3 +22,18 @@ index cebddfd..25c44d2 100644
              $sql_log_bin_before = '';
              $sql_log_bin_after = '';
              if (($config->target->sql_log_bin ?? true) === true) {
+@@ -636,6 +646,14 @@ final class syncdb
+             echo ' (' . number_format(microtime(true) - $time_tmp, 2) . 's)';
+             echo PHP_EOL;
+ 
++            // objects must belong to the importing account; impersonating the source definers needs SUPER
++            self::executeCommand(
++                'sed -E -i' . (self::getOs() === 'mac' ? " ''" : '') . ' -e ' . $sed_quote .
++                's/^((CREATE( OR REPLACE)?( ALGORITHM=[A-Z]+)?)|(\/\*![0-9]+( CREATE\*\/ \/\*![0-9]+)?)) ' .
++                'DEFINER=`([^`]|``)*`@`([^`]|``)*`/\1 DEFINER=CURRENT_USER/' . $sed_quote . ' ' . $tmp_filename,
++                '--- RESETTING OBJECT DEFINERS...'
++            );
++
+             // search / replace
+             if (isset($config->replace)) {
+                 $time_tmp = microtime(true);
