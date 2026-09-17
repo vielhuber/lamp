@@ -103,7 +103,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | command | effect |
 | --- | --- |
 | `./lamp start` | start container, wait for health, apply `.data/environments.yaml` |
-| <code>./lamp add \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--git &lt;url&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--id &lt;12-hex&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--branch &lt;b&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--base-branch &lt;b&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--php &lt;v&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--vpn &lt;name&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--build "&lt;cmd&gt;" \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--subdomain &lt;label&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--directory &lt;name&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--alias &lt;suffix&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--webroot &lt;dir&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--proxy-port &lt;port&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--proxy-exclude &lt;/path&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--visibility private\|public</code> | create environment, returns json; every option is optional; `--subdomain` records a static entry in `.data/environments.yaml`, without it the environment is dynamic; `--alias` is repeatable |
+| `./lamp add [options]` | create environment, returns json; all options below are optional; `--subdomain` records a static entry in `.data/environments.yaml`, without it the environment is dynamic |
 | `./lamp stop` | stop container, keep all data |
 | `./lamp restart` | validate yaml, stop, start, apply |
 | `./lamp status [--json]` | container state, health, ports, supervised services |
@@ -120,6 +120,24 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `./lamp docker-build` | rebuild the image without layer cache, keep volumes (requires stopped container) |
 | `./lamp docker-setup` | create `.data` with commented presets, example files and the compose override; keeps existing files |
 | `./lamp docker-reset` | **delete all compose volumes**, then rebuild the image (requires stopped container) |
+
+```bash
+./lamp add \
+    --git <url> \
+    --id <12-hex> \
+    --branch <b> \
+    --base-branch <b> \
+    --php <v> \
+    --vpn <name> \
+    --build "<cmd>" \
+    --subdomain <label> \
+    --directory <name> \
+    --alias <suffix> \
+    --webroot <dir> \
+    --proxy-port <port> \
+    --proxy-exclude </path> \
+    --visibility private|public
+```
 </details>
 
 <details>
@@ -245,7 +263,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `git.name`, `git.email` | unset                 | global git identity inside the container for commits made through `exec` or `ssh`            |
 | `apache.admin`          | `webmaster@localhost` | `ServerAdmin` of the shared apache configuration                                             |
 | `postfix.hostname`      | `lamp.localdomain`    | `myhostname` and `/etc/mailname` of the container's postfix                                  |
-| `postfix.relayhost`     | empty (direct delivery) | postfix `relayhost`, e.g. `[smtp.example.com]:587`; credentials in `/etc/postfix/sasl_passwd` through a mount in the compose override |
+| `postfix.relayhost`     | empty (direct delivery) | postfix `relayhost`, e.g. `[smtp.example.com]:587`                                     |
+| `postfix.username`, `postfix.password` | unset  | smtp auth for the relay; written to `/etc/postfix/sasl_passwd` (mode 600) on every start |
 | `vpn`                   | disabled              | see [vpn](#vpn)                                                                              |
 
 - all values are applied on every container start, so a pulled image and a locally built image behave the same; edit the file and run `./lamp restart`
@@ -461,7 +480,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - started by supervisor when `.data/cliproxyapi/config.yaml` exists; use `auth-dir: /var/lib/lamp/cliproxyapi/auth`
 - provider logins are documented in the [aistats readme](https://github.com/vielhuber/aistats); run them inside `./lamp ssh`; antigravity's callback port `51121` is not published
-- expose through a project: `subdomain: ai`, `directory: aistats`, `proxy_port: 8317`, `proxy_exclude: /admin`; optional host access via `127.0.0.1:8317:8317` in the compose override
+- expose through a project: `subdomain: ai`, `directory: aistats`, `proxy_port: 8317`, `proxy_exclude: /admin`
 - stop any host cliproxyapi unit before running the container instance against the same oauth accounts
 
 </details>

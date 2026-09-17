@@ -152,13 +152,6 @@ fi
 printf 'HostKey /var/lib/lamp/ssh/ssh_host_ed25519_key\n' > /etc/ssh/sshd_config.d/host-key.conf
 # Mount authorized_keys in /root/.ssh to permit SSH access; password login stays disabled.
 
-#### postfix
-if [[ -s /etc/postfix/sasl_passwd ]]; then
-    postmap /etc/postfix/sasl_passwd
-    chmod 600 /etc/postfix/sasl_passwd.db
-fi
-# Without relay credentials the queue is retained; no automatic test email is sent.
-
 #### supervisor
 # Master processes coordinate graceful shutdown of their own workers.
 supervisor_program() {

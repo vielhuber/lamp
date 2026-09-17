@@ -27,6 +27,7 @@ SITES = Path("/etc/apache2/sites-available")
 ENABLED = Path("/etc/apache2/sites-enabled")
 APACHE_SETTINGS = Path("/etc/apache2/conf-available/lamp.conf")
 MAILNAME = Path("/etc/mailname")
+SASL_PASSWORD = Path("/etc/postfix/sasl_passwd")
 PHP_VERSIONS = ("5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5")
 ENVIRONMENT_DEFAULTS = {"branch": None, "subdomain": None, "aliases": None, "directory": None, "webroot": None, "php": None,
                         "vpn": None, "proxy_port": None, "proxy_exclude": None, "visibility": "private", "build": None}
@@ -57,7 +58,7 @@ def validate_identity(identity):
 
 def configuration():
     value = yaml.safe_load((CONFIGURATION / "config.yaml").read_text())
-    sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname", "relayhost")}
+    sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname", "relayhost", "username", "password")}
     if (not isinstance(value, dict) or "domain" not in value or set(value) - {"domain", "vpn", *sections}
             or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", *sections))):
         raise ValueError("config.yaml must contain domain and optionally git, apache, postfix and vpn mappings; see README.md.")
@@ -71,8 +72,9 @@ def configuration():
                 or any(not isinstance(entry, str) or not entry.strip() or re.search(r"[\r\n\0]", entry) for entry in entries.values())
                 or any(re.search(r"\s", entries[key]) for key in ("admin", "hostname", "relayhost") if key in entries)
                 or ("hostname" in entries and not re.fullmatch(dns_name, entries["hostname"]))
-                or ("relayhost" in entries and not re.fullmatch(r"\[?[A-Za-z0-9.-]+\]?(?::[0-9]{1,5})?", entries["relayhost"]))):
-            raise ValueError(f"{section} may contain only {', '.join(keys)} as nonempty single-line values; hostname must be a lowercase DNS name, relayhost a host or [host]:port.")
+                or ("relayhost" in entries and not re.fullmatch(r"\[?[A-Za-z0-9.-]+\]?(?::[0-9]{1,5})?", entries["relayhost"]))
+                or (("username" in entries) != ("password" in entries)) or ("username" in entries and "relayhost" not in entries)):
+            raise ValueError(f"{section} may contain only {', '.join(keys)} as nonempty single-line values; hostname must be a lowercase DNS name, relayhost a host or [host]:port, username and password need each other and a relayhost.")
     return value
 
 
@@ -87,8 +89,18 @@ def apply_settings(settings):
     APACHE_SETTINGS.write_text(f"Timeout 3000\nServerAdmin {admin}\nServerName localhost\n")
     hostname = (settings.get("postfix") or {}).get("hostname", "lamp.localdomain")
     MAILNAME.write_text(hostname + "\n")
-    relayhost = (settings.get("postfix") or {}).get("relayhost", "")
+    postfix = settings.get("postfix") or {}
+    relayhost = postfix.get("relayhost", "")
     run(["postconf", "-e", "myhostname = " + hostname, "relayhost = " + relayhost])
+    if "username" in postfix:
+        SASL_PASSWORD.write_text(f"{relayhost} {postfix['username']}:{postfix['password']}\n")
+        SASL_PASSWORD.chmod(0o600)
+        run(["postmap", str(SASL_PASSWORD)])
+        if SASL_PASSWORD.with_suffix(".db").exists():
+            SASL_PASSWORD.with_suffix(".db").chmod(0o600)
+    else:
+        SASL_PASSWORD.unlink(missing_ok=True)
+        SASL_PASSWORD.with_suffix(".db").unlink(missing_ok=True)
 
 
 def load_environment(identity):

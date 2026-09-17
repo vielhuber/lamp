@@ -60,11 +60,12 @@ domain: example.com
 # apache:
 #     admin: you@example.com
 
-# optional: postfix hostname (default: lamp.localdomain) and smtp relay (default: direct delivery);
-# relay credentials go into /etc/postfix/sasl_passwd through a mount in docker/docker-compose.override.yml
+# optional: postfix hostname (default: lamp.localdomain) and an authenticated smtp relay (default: direct delivery)
 # postfix:
 #     hostname: mail.example.com
 #     relayhost: '[smtp.example.com]:587'
+#     username: '<USER>'
+#     password: '<PASSWORD>'
 
 # optional: vpn tunnels; profiles live in .data/vpn/, names are lowercase, at most twelve characters, letter first
 # vpn:
@@ -170,8 +171,6 @@ services:
             #   read_only: true
             #   bind:
             #       create_host_path: false
-        # ports:
-        #     - '127.0.0.1:8317:8317'
 PRESET
     printf '%s\n' 'next: set domain in .data/config.yaml, install .data/cloudflare/cloudflared-credentials.json and cloudflare-api-token, then ./lamp start'
     exit 0

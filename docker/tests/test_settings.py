@@ -14,7 +14,8 @@ class SettingsTest(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
-        for name, path in [('CONFIGURATION', self.root), ('APACHE_SETTINGS', self.root / 'lamp.conf'), ('MAILNAME', self.root / 'mailname')]:
+        for name, path in [('CONFIGURATION', self.root), ('APACHE_SETTINGS', self.root / 'lamp.conf'), ('MAILNAME', self.root / 'mailname'),
+                           ('SASL_PASSWORD', self.root / 'sasl_passwd')]:
             mocked = patch.object(control, name, path)
             mocked.start()
             self.addCleanup(mocked.stop)
@@ -33,15 +34,20 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual('[smtp.example.test]:587', control.configuration()['postfix']['relayhost'])
         for text in ['git: {nickname: x}', 'git: {name: ""}', 'git: {name: "a\\nb"}', 'git: [name]', 'apache: {admin: "a b"}',
                      'postfix: {hostname: "Mail.Example"}', 'postfix: {hostname: "a b.test"}', 'postfix: {relayhost: "smtp host"}',
-                     'postfix: {relayhost: "smtp://x"}', 'unknown: 1']:
+                     'postfix: {relayhost: "smtp://x"}', 'postfix: {relayhost: "[a.test]:587", username: "u"}',
+                     'postfix: {username: "u", password: "p"}', 'unknown: 1']:
             with self.subTest(text=text), self.assertRaises(ValueError):
                 (self.root / 'config.yaml').write_text('domain: example.test\n' + text + '\n')
                 control.configuration()
 
     def test_settings_are_applied_and_fall_back_to_defaults(self):
         control.apply_settings({'domain': 'example.test', 'git': {'name': 'Jane Doe', 'email': 'jane@example.test'},
-                                'apache': {'admin': 'admin@example.test'}, 'postfix': {'hostname': 'mail.example.test', 'relayhost': '[smtp.example.test]:587'}})
+                                'apache': {'admin': 'admin@example.test'},
+                                'postfix': {'hostname': 'mail.example.test', 'relayhost': '[smtp.example.test]:587', 'username': 'jane', 'password': 'p:w'}})
         commands = [call.args[0] for call in self.run.call_args_list]
+        self.assertEqual('[smtp.example.test]:587 jane:p:w\n', control.SASL_PASSWORD.read_text())
+        self.assertEqual(0o600, control.SASL_PASSWORD.stat().st_mode & 0o777)
+        self.assertIn(['postmap', str(control.SASL_PASSWORD)], commands)
         self.assertIn(['git', 'config', '--global', 'user.name', 'Jane Doe'], commands)
         self.assertIn(['git', 'config', '--global', 'user.email', 'jane@example.test'], commands)
         self.assertIn(['postconf', '-e', 'myhostname = mail.example.test', 'relayhost = [smtp.example.test]:587'], commands)
@@ -55,6 +61,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual('Timeout 3000\nServerAdmin webmaster@localhost\nServerName localhost\n', control.APACHE_SETTINGS.read_text())
         self.assertEqual('lamp.localdomain\n', control.MAILNAME.read_text())
         self.assertIn(['postconf', '-e', 'myhostname = lamp.localdomain', 'relayhost = '], [call.args[0] for call in self.run.call_args_list])
+        self.assertFalse(control.SASL_PASSWORD.exists())
 
 
 if __name__ == '__main__':
