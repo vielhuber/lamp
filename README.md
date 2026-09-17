@@ -2,9 +2,9 @@
 [![docker build](https://img.shields.io/badge/Docker-Package-blue)](https://github.com/vielhuber/lamp/pkgs/container/lamp)
 [![last commit](https://img.shields.io/github/last-commit/vielhuber/lamp)](https://github.com/vielhuber/lamp/commits)
 
-# 💡 lamp 💡
+# 🛠️ lamp 🛠️
 
-a portable development machine in one ubuntu 26.04 docker container: apache, twelve php versions (5.6–8.5), mysql 8.4, postgresql 18, redis, node, python, ruby, rust and the usual tooling. projects get isolated checkouts and databases, are served through an existing cloudflare tunnel behind cloudflare access, and are managed by one cli that also works over ssh or from an agent harness.
+a portable development machine in docker: apache, php, mysql, postgresql, redis, node, python, ruby, rust and the usual tooling. projects get isolated checkouts and databases, are served through an existing cloudflare tunnel behind cloudflare access, and are managed by one cli that also works over ssh or from an agent harness.
 
 <details>
 
@@ -75,27 +75,27 @@ a portable development machine in one ubuntu 26.04 docker container: apache, twe
 
 <summary><strong>commands</strong></summary>
 
-| command                                   | effect                                                                                   |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `./lamp start`                            | start container, wait for health, apply `.data/environments.yaml`                        |
-| `./lamp start --ensure`                   | start if stopped, otherwise wait for health; no restart, no log file                     |
-| `./lamp restart`                          | validate yaml, stop, start, apply                                                        |
-| `./lamp stop`                             | stop container, keep all data                                                            |
-| `./lamp status [--json]`                  | container state, health, ports, supervised services                                      |
-| `./lamp version [--json]`                 | host checkout version and container image id                                             |
-| `./lamp build`                            | rebuild the image without layer cache, keep volumes (requires stopped container)         |
-| `./lamp build <id>`                       | rerun the configured build of one environment inside the running container              |
-| `./lamp reset`                            | **delete all compose volumes**, then rebuild the image (requires stopped container)      |
-| `./lamp add [options]`                    | create environment, returns json                                                         |
-| `./lamp remove <id>`                      | remove environment, owned databases, runtime data; dynamic project directory only        |
-| `./lamp list [--search <term>]`           | all environments as json; `--search` filters case-insensitively over all values          |
-| `./lamp show <id>`                        | one environment as json                                                                  |
-| `./lamp branch <id> <branch> [--base <b>] [--operation switch\|rename]` | switch or create branch without rebuild                    |
-| `./lamp exec "<command>"`                 | run a command in the container                                                           |
-| `./lamp exec --environment <id> -- <cmd>` | run in the project directory with its php, setup variables and authenticated `curl`      |
-| `./lamp curl <id> -- <curl args>`         | curl the environment's exact https origin with the access service token                  |
-| `./lamp access <id>`                      | origin and access headers as json; secret, for trusted integrations only                 |
-| `./lamp ssh`                              | interactive root shell in the container                                                  |
+| command                                                                 | effect                                                                              |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `./lamp start`                                                          | start container, wait for health, apply `.data/environments.yaml`                   |
+| `./lamp start --ensure`                                                 | start if stopped, otherwise wait for health; no restart, no log file                |
+| `./lamp restart`                                                        | validate yaml, stop, start, apply                                                   |
+| `./lamp stop`                                                           | stop container, keep all data                                                       |
+| `./lamp status [--json]`                                                | container state, health, ports, supervised services                                 |
+| `./lamp version [--json]`                                               | host checkout version and container image id                                        |
+| `./lamp build`                                                          | rebuild the image without layer cache, keep volumes (requires stopped container)    |
+| `./lamp build <id>`                                                     | rerun the configured build of one environment inside the running container          |
+| `./lamp reset`                                                          | **delete all compose volumes**, then rebuild the image (requires stopped container) |
+| `./lamp add [options]`                                                  | create environment, returns json                                                    |
+| `./lamp remove <id>`                                                    | remove environment, owned databases, runtime data; dynamic project directory only   |
+| `./lamp list [--search <term>]`                                         | all environments as json; `--search` filters case-insensitively over all values     |
+| `./lamp show <id>`                                                      | one environment as json                                                             |
+| `./lamp branch <id> <branch> [--base <b>] [--operation switch\|rename]` | switch or create branch without rebuild                                             |
+| `./lamp exec "<command>"`                                               | run a command in the container                                                      |
+| `./lamp exec --environment <id> -- <cmd>`                               | run in the project directory with its php, setup variables and authenticated `curl` |
+| `./lamp curl <id> -- <curl args>`                                       | curl the environment's exact https origin with the access service token             |
+| `./lamp access <id>`                                                    | origin and access headers as json; secret, for trusted integrations only            |
+| `./lamp ssh`                                                            | interactive root shell in the container                                             |
 
 - `add` options: `--git <url>` `--id <12-hex>` `--branch <b>` `--base-branch <b>` `--php <v>` `--vpn <name>` `--build "<cmd>"` `--subdomain <label>` `--alias <suffix>` (repeatable) `--webroot <dir>` `--proxy-port <port>` `--proxy-exclude </path>` `--visibility private|public`
 - `build`, `reset`, `start` and `restart` write a timestamped log to `.logs/`
@@ -192,20 +192,20 @@ a portable development machine in one ubuntu 26.04 docker container: apache, twe
 
 <summary>data layout</summary>
 
-| path                                            | contents                                                           | survives `reset` |
-| ----------------------------------------------- | ------------------------------------------------------------------ | ---------------- |
-| `.data/config.yaml`                             | `domain`, optional `git`, `apache`, `postfix`, `vpn` (mode 600)    | yes              |
-| `.data/environments.yaml`                       | desired environments (mode 600)                                    | yes              |
-| `.data/build/*.sh`                              | shared repository build scripts (mode 600)                         | yes              |
-| `.data/syncdb/*.json`                           | original syncdb profiles (mode 600)                                | yes              |
-| `.data/ssh/`                                    | container `/root/.ssh` (keys, config, known_hosts)                 | yes              |
-| `.data/cloudflare/`                             | tunnel credentials, access service token, management api token     | yes              |
-| `.data/cliproxyapi/`                            | cliproxyapi config, oauth auth files, logs                         | yes              |
-| `.data/ca/`                                     | local ca for direct-origin https                                   | yes              |
-| `.data/vpn/`                                    | openvpn / wireguard profiles                                       | yes              |
-| `.logs/`                                        | host-side command logs                                             | yes              |
-| `/var/www`                                      | project checkouts (host bind mount)                                | yes              |
-| compose volumes                                 | mysql, postgresql, redis, apache sites, mail, certificates, `/var/lib/lamp` state | **no** |
+| path                      | contents                                                                          | survives `reset` |
+| ------------------------- | --------------------------------------------------------------------------------- | ---------------- |
+| `.data/config.yaml`       | `domain`, optional `git`, `apache`, `postfix`, `vpn` (mode 600)                   | yes              |
+| `.data/environments.yaml` | desired environments (mode 600)                                                   | yes              |
+| `.data/build/*.sh`        | shared repository build scripts (mode 600)                                        | yes              |
+| `.data/syncdb/*.json`     | original syncdb profiles (mode 600)                                               | yes              |
+| `.data/ssh/`              | container `/root/.ssh` (keys, config, known_hosts)                                | yes              |
+| `.data/cloudflare/`       | tunnel credentials, access service token, management api token                    | yes              |
+| `.data/cliproxyapi/`      | cliproxyapi config, oauth auth files, logs                                        | yes              |
+| `.data/ca/`               | local ca for direct-origin https                                                  | yes              |
+| `.data/vpn/`              | openvpn / wireguard profiles                                                      | yes              |
+| `.logs/`                  | host-side command logs                                                            | yes              |
+| `/var/www`                | project checkouts (host bind mount)                                               | yes              |
+| compose volumes           | mysql, postgresql, redis, apache sites, mail, certificates, `/var/lib/lamp` state | **no**           |
 
 - `.data` is mounted at `/etc/lamp`, `.data/ssh` at `/root/.ssh`, `.data/cliproxyapi` at `/var/lib/lamp/cliproxyapi`
 - `.data` and `.logs` are excluded from git and from the image
@@ -233,13 +233,13 @@ vpn:
     tunnels: []
 ```
 
-| key                     | default               | effect                                                                                   |
-| ----------------------- | --------------------- | ---------------------------------------------------------------------------------------- |
+| key                     | default               | effect                                                                                       |
+| ----------------------- | --------------------- | -------------------------------------------------------------------------------------------- |
 | `domain`                | required              | base domain of every environment; a change reapplies all environments on `start` / `restart` |
-| `git.name`, `git.email` | unset                 | global git identity inside the container for commits made through `exec` or `ssh`       |
-| `apache.admin`          | `webmaster@localhost` | `ServerAdmin` of the shared apache configuration                                         |
-| `postfix.hostname`      | `lamp.localdomain`    | `myhostname` and `/etc/mailname` of the container's postfix                              |
-| `vpn`                   | disabled              | see [vpn](#vpn)                                                                          |
+| `git.name`, `git.email` | unset                 | global git identity inside the container for commits made through `exec` or `ssh`            |
+| `apache.admin`          | `webmaster@localhost` | `ServerAdmin` of the shared apache configuration                                             |
+| `postfix.hostname`      | `lamp.localdomain`    | `myhostname` and `/etc/mailname` of the container's postfix                                  |
+| `vpn`                   | disabled              | see [vpn](#vpn)                                                                              |
 
 - all values are applied on every container start, so a pulled image and a locally built image behave the same; edit the file and run `./lamp restart`
 - invalid or unknown keys stop the start before any environment is touched
@@ -269,19 +269,19 @@ abcdef123456:
     build: 'syncdb project-production-local && composer install'
 ```
 
-| key             | default | meaning                                                                                       |
-| --------------- | ------- | --------------------------------------------------------------------------------------------- |
-| `git`           | null    | ssh `git@host:path` or credential-free https url; null for an empty environment               |
-| `branch`        | null    | null selects the repository default branch                                                    |
-| `subdomain`     | null    | one lowercase label or a list; first label is the primary host and the static project path    |
-| `aliases`       | omitted | suffixes: `<primary>-<suffix>.<domain>` share the same checkout and databases                 |
+| key             | default | meaning                                                                                        |
+| --------------- | ------- | ---------------------------------------------------------------------------------------------- |
+| `git`           | null    | ssh `git@host:path` or credential-free https url; null for an empty environment                |
+| `branch`        | null    | null selects the repository default branch                                                     |
+| `subdomain`     | null    | one lowercase label or a list; first label is the primary host and the static project path     |
+| `aliases`       | omitted | suffixes: `<primary>-<suffix>.<domain>` share the same checkout and databases                  |
 | `webroot`       | null    | directory relative to the checkout; null picks `public/` or `web/` with `index.php`, else root |
-| `php`           | omitted | explicit version; omitted reads the repository root `.phprc`, else `8.5`                      |
-| `vpn`           | null    | required tunnel name from `config.yaml`                                                       |
-| `proxy_port`    | null    | forward the vhost to `http://127.0.0.1:<port>/` (`ProxyPreserveHost On`)                      |
-| `proxy_exclude` | null    | one path prefix that stays on php, e.g. `/admin`                                              |
-| `visibility`    | private | `public` adds a cloudflare access bypass for exactly this environment's hostnames             |
-| `build`         | omitted | inline build; omitted uses `.data/build/<host>-<owner>-<repo>.sh` if present; `':'` for no-op |
+| `php`           | omitted | explicit version; omitted reads the repository root `.phprc`, else `8.5`                       |
+| `vpn`           | null    | required tunnel name from `config.yaml`                                                        |
+| `proxy_port`    | null    | forward the vhost to `http://127.0.0.1:<port>/` (`ProxyPreserveHost On`)                       |
+| `proxy_exclude` | null    | one path prefix that stays on php, e.g. `/admin`                                               |
+| `visibility`    | private | `public` adds a cloudflare access bypass for exactly this environment's hostnames              |
+| `build`         | omitted | inline build; omitted uses `.data/build/<host>-<owner>-<repo>.sh` if present; `':'` for no-op  |
 
 - project path: `/var/www/<first subdomain>` for static environments, `/var/www/_environments/<id>` for dynamic ones; the same path on host and container
 - existing directories are adopted without clone, pull, checkout or chown; missing directories are cloned
@@ -317,17 +317,17 @@ npm run prod
 }
 ```
 
-| variable                                      | value                                                        |
-| --------------------------------------------- | ------------------------------------------------------------ |
-| `LAMP_ID`                                     | environment id                                               |
-| `LAMP_URL`, `APP_URL`                         | `https://<hostname>`                                         |
-| `LAMP_PROJECT_DIR`                            | checkout path                                                |
-| `LAMP_DATA_DIR`                               | persistent per-environment data directory                    |
-| `DB_CONNECTION`                               | `mysql`; a successful sqlite `syncdb` switches it to `sqlite` |
-| `DB_HOST`, `DB_PORT`                          | `localhost`, `3306`                                          |
-| `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`   | `lamp_<id>` / generated password, or the sqlite file path    |
-| `PGHOST`, `PGPORT`                            | `localhost`, `5432`                                          |
-| `PGDATABASE`, `PGUSER`, `PGPASSWORD`          | `lamp_<id>` / generated password                             |
+| variable                                    | value                                                         |
+| ------------------------------------------- | ------------------------------------------------------------- |
+| `LAMP_ID`                                   | environment id                                                |
+| `LAMP_URL`, `APP_URL`                       | `https://<hostname>`                                          |
+| `LAMP_PROJECT_DIR`                          | checkout path                                                 |
+| `LAMP_DATA_DIR`                             | persistent per-environment data directory                     |
+| `DB_CONNECTION`                             | `mysql`; a successful sqlite `syncdb` switches it to `sqlite` |
+| `DB_HOST`, `DB_PORT`                        | `localhost`, `3306`                                           |
+| `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | `lamp_<id>` / generated password, or the sqlite file path     |
+| `PGHOST`, `PGPORT`                          | `localhost`, `5432`                                           |
+| `PGDATABASE`, `PGUSER`, `PGPASSWORD`        | `lamp_<id>` / generated password                              |
 
 - the variables are not injected into php-fpm; the build must write them into the project's own configuration (`.env`, `wp-config.php`, …)
 - later shells: `./lamp ssh`, `source /var/lib/lamp/environments/<id>/setup.env`, `cd "$LAMP_PROJECT_DIR"`
