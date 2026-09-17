@@ -37,9 +37,9 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>2. configure instance</summary>
 
 - `mkdir lamp && cd lamp`
-- `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init`
-- `mkdir -m 700 .data .data/cloudflare .data/ssh .data/syncdb .data/build`
-- `printf 'domain: example.com\n' > .data/config.yaml && chmod 600 .data/config.yaml`
+- `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init` (copies `lamp` and `docker/docker-compose.yml` out of the image)
+- `./lamp setup` (creates `.data` with a commented `config.yaml`, an empty `environments.yaml` and example files for syncdb, build scripts and the access service token; never overwrites)
+- set `domain` in `.data/config.yaml`
 - `install -m 600 ~/.cloudflared/<TUNNEL_UUID>.json .data/cloudflare/cloudflared-credentials.json` (see [cloudflare](#cloudflare))
 - put ssh keys into `.data/ssh/`, syncdb profiles into `.data/syncdb/`, build scripts into `.data/build/`
 - optional: `sudo ln -s "$(pwd -P)/lamp" /usr/local/bin/lamp`
@@ -77,6 +77,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 | command                                                                 | effect                                                                              |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `./lamp setup`                                                          | create `.data` with commented presets and example files; keeps existing files       |
 | `./lamp start`                                                          | start container, wait for health, apply `.data/environments.yaml`                   |
 | `./lamp start --ensure`                                                 | start if stopped, otherwise wait for health; no restart, no log file                |
 | `./lamp restart`                                                        | validate yaml, stop, start, apply                                                   |
@@ -218,20 +219,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>configuration</summary>
 
-```yaml
-# .data/config.yaml (mode 600)
-domain: example.com
-git:
-    name: Your Name
-    email: you@example.com
-apache:
-    admin: you@example.com
-postfix:
-    hostname: mail.example.com
-vpn:
-    enabled: false
-    tunnels: []
-```
+- `./lamp setup` writes `.data/config.yaml` (mode 600) with `domain` set and every optional section as a commented example
 
 | key                     | default               | effect                                                                                       |
 | ----------------------- | --------------------- | -------------------------------------------------------------------------------------------- |
@@ -256,19 +244,7 @@ vpn:
 - ids are runtime identifiers reported by `add`, `show` and `list`; `add --id` reuses one and is idempotent: identical settings return the existing environment, different settings fail
 - a file from the previous id-keyed format is converted on first use; its dynamic entries are dropped from the file, the environments themselves stay
 
-```yaml
-- git: git@github.com:<owner>/<project>.git
-  branch: feature/XYZ
-  subdomain: project
-  aliases: [shop, blog]
-  webroot: public
-  php: '8.5'
-  vpn: null
-  proxy_port: null
-  proxy_exclude: null
-  visibility: private
-  build: 'syncdb project-production-local && composer install'
-```
+- `./lamp setup` writes an empty `.data/environments.yaml` with a commented example entry; the first `add` or reconciliation rewrites the file without comments
 
 | key             | default | meaning                                                                                        |
 | --------------- | ------- | ---------------------------------------------------------------------------------------------- |
@@ -305,19 +281,7 @@ vpn:
 - runs on first registration (also for adopted directories), when settings change, when the script content hash changes, and on `./lamp build <id>`
 - complete output goes to `/var/lib/lamp/environments/<id>/build.log` (mode 600); the path is printed at start and in the failure message
 - no build runs without a script or `build` setting
-
-```bash
-#!/usr/bin/env bash
-syncdb project-production-local && {
-set -euo pipefail
-for key in DB_CONNECTION DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD; do
-    sed -i "s|^$key=.*|$key=${!key}|" .env
-done
-composer install
-npm ci
-npm run prod
-}
-```
+- `./lamp setup` writes the example `.data/build/github.com-owner-project.sh`: syncdb import, `.env` created from an embedded heredoc with `APP_URL` and `DB_*` rewritten from the setup variables, then composer and npm; copy it per project and keep only the steps the project has
 
 | variable                                    | value                                                         |
 | ------------------------------------------- | ------------------------------------------------------------- |
@@ -429,11 +393,7 @@ npm run prod
 
 - zero trust › `Access controls › Service credentials › Service Tokens` › create; add `service auth › include › service token` to the wildcard application
 
-```yaml
-# .data/cloudflare/cloudflare-service-token.yaml (mode 600)
-CF-Access-Client-Id: '<CLIENT_ID>'
-CF-Access-Client-Secret: '<CLIENT_SECRET>'
-```
+- `./lamp setup` writes `.data/cloudflare/cloudflare-service-token.yaml.example`; copy it to `cloudflare-service-token.yaml` (mode 600) and fill in `CF-Access-Client-Id` and `CF-Access-Client-Secret`
 
 - `./lamp curl <id> -- -fsS https://<hostname>/` and the `curl` wrapper inside `exec --environment` send the headers only to that environment's exact https origin, never follow redirects with credentials, and refuse unsupported options
 - `./lamp access <id>` prints origin and headers as json for trusted integrations; keep it out of visible tool calls and logs
@@ -499,24 +459,7 @@ CF-Access-Client-Secret: '<CLIENT_SECRET>'
 
 <summary>vpn</summary>
 
-```yaml
-# .data/config.yaml
-domain: example.com
-vpn:
-    enabled: true
-    tunnels:
-        - name: office
-          type: openvpn
-          config: /etc/lamp/vpn/office.ovpn
-          username: '<USER>'
-          password: '<PASSWORD>'
-          routes: [192.168.50.0/24]
-          hosts:
-              internal.example.com: 192.168.50.10
-        - name: wg
-          type: wireguard
-          config: /etc/lamp/vpn/wg.conf
-```
+- the `vpn` section of `.data/config.yaml` lists tunnels with `name`, `type` (`openvpn` or `wireguard`), `config`, optional `username` / `password`, `routes` and `hosts`; `./lamp setup` leaves a commented example in the file
 
 - profiles in `.data/vpn/` (mode 600); names: lowercase, max twelve characters, letter first
 - `./lamp restart` applies changes; `./lamp exec 'supervisorctl start|stop|status vpn-office'` controls a tunnel

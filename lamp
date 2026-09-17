@@ -11,7 +11,8 @@ json=false
 if [[ "$command" = start && "${1:-}" = --ensure ]]; then ensure=true; shift; fi
 if [[ "$command" = status || "$command" = version ]] && [[ "${1:-}" = --json ]]; then json=true; shift; fi
 if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
-    printf '%s\n' 'Usage: lamp build [<id>]|reset|start [--ensure]|restart|stop|status [--json]|version [--json]|add|remove <id>|list [--search <term>]|show <id>|ssh|exec "command"' \
+    printf '%s\n' 'Usage: lamp setup|build [<id>]|reset|start [--ensure]|restart|stop|status [--json]|version [--json]|add|remove <id>|list [--search <term>]|show <id>|ssh|exec "command"' \
+        'setup creates .data with a commented config.yaml, an empty environments.yaml and example files for syncdb, build scripts and the Access service token; existing files are kept.' \
         'build <id> reruns the configured build of an existing environment inside the running container; build without ID rebuilds the image without layer cache.' \
         'list --search <term> returns only environments whose values contain the term (case-insensitive).' \
         'add [--git <repository>] [--id <12-hex-id>] [--branch <branch>] [--base-branch <branch>] [--php <version>] [--vpn <profile>] [--build <command>] [--subdomain <label>] [--alias <suffix> ...] [--webroot <directory>] [--proxy-port <port>] [--proxy-exclude <path>] [--visibility private|public]' \
@@ -26,7 +27,7 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
     exit 0
 fi
 case "$command" in
-    reset|start|restart|stop|status|version|ssh) test "$#" -eq 0 ;;
+    setup|reset|start|restart|stop|status|version|ssh) test "$#" -eq 0 ;;
     build) test "$#" -le 1 ;;
     list) test "$#" -eq 0 || [[ "$#" = 2 && "$1" = --search ]] ;;
     remove|show|access) test "$#" -eq 1 ;;
@@ -34,6 +35,127 @@ case "$command" in
     add) ;;
     *) printf 'Unknown command: %s\n' "$command" >&2; exit 2 ;;
 esac
+if [[ "$command" = setup ]]; then
+    data="$directory/.data"
+    preset() {
+        local path=$1 mode=$2
+        if [[ -e "$path" ]]; then
+            cat > /dev/null
+            printf 'kept    %s\n' "${path#"$directory/"}"
+            return
+        fi
+        (umask 077; cat > "$path")
+        chmod "$mode" "$path"
+        printf 'created %s\n' "${path#"$directory/"}"
+    }
+    mkdir -p "$data" "$data/build" "$data/syncdb" "$data/ssh" "$data/cloudflare" "$data/vpn" "$data/cliproxyapi"
+    chmod 700 "$data" "$data/build" "$data/syncdb" "$data/ssh" "$data/cloudflare" "$data/vpn" "$data/cliproxyapi"
+    preset "$data/config.yaml" 600 <<'PRESET'
+# base domain of every environment: https://<subdomain-or-id>.<domain>
+domain: example.com
+
+# optional: git identity for commits made inside the container
+# git:
+#     name: Your Name
+#     email: you@example.com
+
+# optional: apache ServerAdmin (default: webmaster@localhost)
+# apache:
+#     admin: you@example.com
+
+# optional: postfix hostname (default: lamp.localdomain)
+# postfix:
+#     hostname: mail.example.com
+
+# optional: vpn tunnels; profiles live in .data/vpn/, names are lowercase, at most twelve characters, letter first
+# vpn:
+#     enabled: true
+#     tunnels:
+#         - name: office
+#           type: openvpn
+#           config: /etc/lamp/vpn/office.ovpn
+#           username: '<USER>'
+#           password: '<PASSWORD>'
+#           routes: [192.168.50.0/24]
+#           hosts:
+#               internal.example.com: 192.168.50.10
+#         - name: wg
+#           type: wireguard
+#           config: /etc/lamp/vpn/wg.conf
+PRESET
+    preset "$data/environments.yaml" 600 <<'PRESET'
+# static environments, one entry per project; lamp add --subdomain appends, lamp remove deletes, start/restart reconciles.
+# an entry and a running environment are the same when every value matches. dynamic environments are not listed here.
+# - git: git@github.com:<owner>/<project>.git
+#   branch: null
+#   subdomain: project
+#   aliases: [shop, blog]
+#   webroot: public
+#   php: '8.5'
+#   vpn: null
+#   proxy_port: null
+#   proxy_exclude: null
+#   visibility: private
+#   build: 'syncdb project-production-local && composer install'
+[]
+PRESET
+    preset "$data/syncdb/example-production-local.json" 600 <<'PRESET'
+{
+    "engine": "mysql",
+    "source": {
+        "host": "127.0.0.1",
+        "port": "3306",
+        "database": "project",
+        "username": "project",
+        "password": "<PASSWORD>",
+        "cmd": "mysql",
+        "ssh": {
+            "host": "example.com",
+            "username": "deploy",
+            "key": "~/.ssh/id_rsa"
+        }
+    },
+    "target": {
+        "host": "localhost",
+        "port": "3306",
+        "database": "project",
+        "username": "root",
+        "password": "<PASSWORD>",
+        "ssh": false,
+        "cmd": "mysql"
+    },
+    "replace": {
+        "https://www.example.com": "https://project.example.com"
+    }
+}
+PRESET
+    preset "$data/build/github.com-owner-project.sh" 600 <<'PRESET'
+#!/usr/bin/env bash
+set -euo pipefail
+syncdb example-production-local
+test -f .env || cat > .env <<'LAMP_ENV'
+APP_URL=
+DB_CONNECTION=mysql
+DB_HOST=localhost
+DB_PORT=3306
+DB_DATABASE=
+DB_USERNAME=
+DB_PASSWORD=
+LAMP_ENV
+for key in APP_URL DB_CONNECTION DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD; do
+    sed -i "s|^$key=.*|$key=${!key}|" .env
+done
+composer install --no-interaction
+npm install
+npm run prod
+PRESET
+    preset "$data/cloudflare/cloudflare-service-token.yaml.example" 600 <<'PRESET'
+CF-Access-Client-Id: '<CLIENT_ID>'
+CF-Access-Client-Secret: '<CLIENT_SECRET>'
+PRESET
+    printf '%s\n' 'next: set domain in .data/config.yaml, install .data/cloudflare/cloudflared-credentials.json and cloudflare-api-token, then ./lamp start'
+    exit 0
+fi
 if [[ ( "$command" = build && "$environment_build" = false ) || "$command" = reset || "$command" = restart || ( "$command" = start && "$ensure" = false ) ]]; then
     mkdir -p "$directory/.logs"
     chmod 700 "$directory/.logs"
