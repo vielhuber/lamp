@@ -1,0 +1,67 @@
+name: CI
+
+env:
+    CI: true
+
+on:
+    # on manual push
+    workflow_dispatch:
+    # on push to tags
+    push:
+        tags:
+            - 'v*'
+            - '[0-9]*'
+
+jobs:
+    build-test:
+        strategy:
+            max-parallel: 9
+            fail-fast: true
+            matrix:
+                operating-system: ['ubuntu-22.04'] # don't use "ubuntu-latest" here, since act maps that to ubuntu-20
+                php-versions: ['8.5']
+                node-versions: ['lts/*']
+
+        timeout-minutes: 360
+
+        runs-on: ${{ matrix.operating-system }}
+
+        name: ${{ matrix.operating-system }} (PHP ${{ matrix.php-versions }}, Node ${{ matrix.node-versions }})
+
+        permissions:
+            contents: read
+            packages: write
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+              with:
+                  lfs: true
+
+            - name: Install libraries
+              run: |
+                  if [ "$RUNNER_OS" == "Linux" ]; then
+                        sudo apt-get update
+                        sudo apt-get install -y coreutils nano
+                        sudo apt-get install -y libsodium23 libzip-dev libc-client-dev libkrb5-dev
+                  elif [ "$RUNNER_OS" == "macOS" ]; then
+                        brew install coreutils
+                  elif [ "$RUNNER_OS" == "Windows" ]; then
+                        choco install busybox -y
+                  fi
+              shell: bash
+
+            - name: Docker build - Login
+              uses: docker/login-action@v4
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Docker build - Push
+              uses: docker/build-push-action@v7
+              with:
+                  context: .
+                  file: docker/Dockerfile
+                  push: true
+                  tags: ghcr.io/vielhuber/lamp:latest

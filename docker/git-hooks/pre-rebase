@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+if [[ "${2:-$(git branch --show-current)}" == main ]]; then
+    printf '\n⛔ Rebasing main is forbidden. Merge the feature branch instead.\n\n' >&2
+    exit 1
+fi

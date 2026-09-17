@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+[[ "$(git branch --show-current)" == feature/* ]] || exit 0
+if env | grep -q '^GITHEAD_.*=main$'; then
+    printf '\n⛔ Merging main into feature/* is forbidden. Run: git merge --abort && git rebase main\n\n' >&2
+    exit 1
+fi

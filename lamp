@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+directory=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
+command=${1:-help}
+if (( $# )); then shift; fi
+environment_build=false
+if [[ "$command" = build && $# -eq 1 ]]; then environment_build=true; fi
+ensure=false
+json=false
+if [[ "$command" = start && "${1:-}" = --ensure ]]; then ensure=true; shift; fi
+if [[ "$command" = status || "$command" = version ]] && [[ "${1:-}" = --json ]]; then json=true; shift; fi
+if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
+    printf '%s\n' 'Usage: lamp build [<id>]|reset|start [--ensure]|restart|stop|status [--json]|version [--json]|add|remove <id>|list [--search <term>]|show <id>|ssh|exec "command"' \
+        'build <id> reruns the configured build of an existing environment inside the running container; build without ID rebuilds the image without layer cache.' \
+        'list --search <term> returns only environments whose values contain the term (case-insensitive).' \
+        'add [--git <repository>] [--id <12-hex-id>] [--branch <branch>] [--base-branch <branch>] [--php <version>] [--vpn <profile>] [--build <command>] [--subdomain <label>] [--alias <suffix> ...] [--webroot <directory>] [--proxy-port <port>] [--proxy-exclude <path>] [--visibility private|public]' \
+        'exec --environment <id> -- <executable> [arguments...]' \
+        'branch <id> <branch> [--base <branch>] [--operation switch|rename]' \
+        'curl <id> -- <curl arguments>; access <id> (secret JSON for trusted integrations only)' \
+        'Visibility defaults to private; public creates a hostname-specific Cloudflare Access bypass.' \
+        'Each --alias adds <subdomain-or-id>-<suffix>.<domain> to the same environment; show includes all URLs.' \
+        'Without --build, .data/build/<host>-<repository-path-with-hyphens>.sh is used if it exists.' \
+        'For isolated database imports, use --build "syncdb <profile> && <setup commands>".' \
+        'WARNING: reset requires a stopped container and removes the containers AND ALL Compose volumes before rebuilding without layer cache; build keeps the volumes.'
+    exit 0
+fi
+case "$command" in
+    reset|start|restart|stop|status|version|ssh) test "$#" -eq 0 ;;
+    build) test "$#" -le 1 ;;
+    list) test "$#" -eq 0 || [[ "$#" = 2 && "$1" = --search ]] ;;
+    remove|show|access) test "$#" -eq 1 ;;
+    exec|curl|branch) ;;
+    add) ;;
+    *) printf 'Unknown command: %s\n' "$command" >&2; exit 2 ;;
+esac
+if [[ ( "$command" = build && "$environment_build" = false ) || "$command" = reset || "$command" = restart || ( "$command" = start && "$ensure" = false ) ]]; then
+    mkdir -p "$directory/.logs"
+    chmod 700 "$directory/.logs"
+    log_file=$(mktemp "$directory/.logs/$command-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX.log")
+    exec 3>&1 4>&2
+    exec > >(sed -u $'s/\033\\[[0-?]*[ -/]*[@-~]//g;s/\r/\\n/g' | tee -a "$log_file" >&3) 2>&1
+    log_process=$!
+    finish_log() {
+        local result=$1 logs_result
+        trap - EXIT INT TERM
+        set +e
+        if [[ -v start_since ]]; then
+            printf "\nContainer startup output:\n"
+            "${compose[@]}" logs --no-color --timestamps --since "$start_since" app
+            logs_result=$?
+            if [[ "$result" = 0 && "$logs_result" != 0 ]]; then result=$logs_result; fi
+            "${compose[@]}" ps --all
+        fi
+        printf "\n[%s] %s finished (exit %s, elapsed %ss)\n" "$(date -u +%FT%TZ)" "$command" "$result" "$SECONDS"
+        exec 1>&3 2>&4 3>&- 4>&-
+        wait "$log_process"
+        logs_result=$?
+        if [[ "$logs_result" != 0 ]]; then
+            printf "Could not finish writing log: %s\n" "$log_file" >&2
+            if [[ "$result" = 0 ]]; then result=$logs_result; fi
+        fi
+        exit "$result"
+    }
+    trap 'finish_log $?' EXIT
+    trap 'finish_log 130' INT
+    trap 'finish_log 143' TERM
+    printf '[%s] %s started\nLog: %s\n' "$(date -u +%FT%TZ)" "$command" "$log_file"
+fi
+export LAMP_DATA_DIR="$directory/.data"
+compose=(docker compose --ansi never --progress plain --project-directory "$directory/docker" -f "$directory/docker/docker-compose.yml")
+if [[ -f "$directory/docker/docker-compose.override.yml" ]]; then
+    compose+=(-f "$directory/docker/docker-compose.override.yml")
+fi
+if [[ "$command" = status || "$command" = version ]]; then
+    if $json; then
+        container_id=$("${compose[@]}" ps --all --quiet app)
+        state=missing
+        health=unknown
+        if [[ -n "$container_id" ]]; then
+            state=$(docker inspect --format '{{.State.Status}}' "$container_id")
+            health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' "$container_id")
+        fi
+        python3 -c 'import json,sys; print(json.dumps(dict(root=sys.argv[1],state=sys.argv[2],healthy=sys.argv[3]=="healthy",api=1)))' "$directory" "$state" "$health"
+        exit 0
+    fi
+    printf 'LAMP\nCheckout: %s\n' "$directory"
+    if [[ "$command" = version ]]; then
+        revision=$(git -C "$directory" describe --tags --always --dirty 2>/dev/null) || revision='unknown (Git metadata unavailable)'
+        printf 'Source version: %s\n' "$revision"
+    fi
+    if ! container_id=$("${compose[@]}" ps --all --quiet app); then
+        printf 'Container information unavailable: Docker/Compose query failed.\n' >&2
+        exit 1
+    fi
+    if [[ -z "$container_id" ]]; then
+        printf 'Container: not created\n'
+        if [[ "$command" = version ]]; then printf 'Container image: unavailable (no container)\n'; fi
+        exit 0
+    fi
+    if [[ "$command" = version ]]; then
+        docker inspect --type container --format 'Container image: {{.Image}}' "$container_id"
+        exit 0
+    fi
+    "${compose[@]}" ps --all app
+    container_state=$(docker inspect --type container --format '{{.State.Status}}' "$container_id")
+    if [[ "$container_state" != running ]]; then
+        printf '\nServices: not queried (container %s)\n' "$container_state"
+        exit 0
+    fi
+    printf '\nServices:\n'
+    service_result=0
+    "${compose[@]}" exec -T app supervisorctl status || service_result=$?
+    if [[ "$service_result" != 0 && "$service_result" != 3 ]]; then exit "$service_result"; fi
+    exit 0
+fi
+mkdir -p "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/cliproxyapi" "$LAMP_DATA_DIR/build"
+chmod 700 "$LAMP_DATA_DIR" "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/cliproxyapi" "$LAMP_DATA_DIR/build"
+if [[ ! -f "$LAMP_DATA_DIR/config.yaml" ]]; then
+    printf '%s\n' 'Missing .data/config.yaml. Create it as documented in README.md before running LAMP.' >&2
+    exit 1
+fi
+# environments belong to www-data while harnesses run as root on the host
+if [[ "$command" = start || "$command" = add ]] && ! git config --global --get-all safe.directory | grep -qx '\*'; then
+    git config --global --add safe.directory '*'
+fi
+case "$command" in
+    build|reset|start|restart|stop|add|remove)
+        lock_identity=$(printf '%s' "$directory" | sha256sum)
+        exec 9>> "/tmp/lamp-${lock_identity%% *}.lock"
+        flock 9
+        ;;
+esac
+if $environment_build; then
+    "${compose[@]}" exec -T app python3 /opt/lamp/control.py build "$1"
+    exit
+fi
+case "$command" in
+    build|reset|start|restart|stop)
+        container_state=$("${compose[@]}" ps --all --format '{{.State}}' app)
+        case "$container_state" in
+            running|restarting|paused)
+                if [[ "$command" = start ]] && $ensure; then
+                    for attempt in $(seq 1 120); do
+                        health=$("${compose[@]}" ps --all --quiet app | xargs docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}')
+                        if [[ "$health" = healthy ]]; then exit 0; fi
+                        if [[ "$health" = unhealthy ]]; then printf '%s\n' 'LAMP is unhealthy.' >&2; exit 1; fi
+                        sleep 2
+                    done
+                    printf '%s\n' 'LAMP readiness timed out.' >&2
+                    exit 1
+                fi
+                if [[ "$command" != stop && "$command" != restart ]]; then
+                    printf 'Cannot %s: LAMP is already active. Run lamp stop first.\n' "$command" >&2
+                    exit 1
+                fi
+                ;;
+            ''|created|exited|dead)
+                if [[ "$command" = stop ]]; then
+                    printf 'Cannot stop: LAMP is not running.\n' >&2
+                    exit 1
+                fi
+                ;;
+            *) printf 'Cannot %s: unexpected LAMP container state (%s).\n' "$command" "$container_state" >&2; exit 1 ;;
+        esac
+        ;;
+esac
+case "$command" in
+    build) "${compose[@]}" build --no-cache ;;
+    reset)
+        terminal_type=${TERM:-xterm}
+        if [[ "$terminal_type" = dumb ]]; then terminal_type=xterm; fi
+        TERM="$terminal_type" clear >&3 && "${compose[@]}" down --volumes && "${compose[@]}" build --no-cache
+        ;;
+    start|restart)
+        if [[ "$command" = restart && "$container_state" = running ]]; then
+            "${compose[@]}" exec -T app python3 /opt/lamp/vpn.py validate
+            "${compose[@]}" exec -T app python3 /opt/lamp/control.py validate
+        fi
+        if [[ "$command" = restart ]]; then "${compose[@]}" stop; fi
+        start_since=$(date -u +%FT%TZ)
+        "${compose[@]}" up -d --no-build --wait --wait-timeout 240
+        "${compose[@]}" exec -T app python3 /opt/lamp/control.py reconcile
+        ;;
+    stop) "${compose[@]}" stop ;;
+    ssh) "${compose[@]}" exec app bash -il ;;
+    exec)
+        if [[ "${1:-}" = --environment ]]; then
+            shift
+            "${compose[@]}" exec -T app python3 /opt/lamp/control.py exec "$@"
+        else
+            test "$#" -eq 1
+            "${compose[@]}" exec -T app bash -lc "$1"
+        fi
+        ;;
+    curl)
+        "${compose[@]}" exec -T app python3 /opt/lamp/curl.py "$@"
+        ;;
+    *) "${compose[@]}" exec -T app python3 /opt/lamp/control.py "$command" "$@" ;;
+esac

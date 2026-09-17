@@ -1,0 +1,7 @@
+*.log
+.logs/
+.data/
+/id_rsa*
+/syncdb/
+__pycache__/
+docker/docker-compose.override.yml
