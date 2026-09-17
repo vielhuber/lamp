@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -162,6 +163,22 @@ class ChatEnvironmentsTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Git index is busy'):
                 self.invoke('branch', self.identity, 'feature/existing')
         self.assertEqual('foreign process', lock.read_text())
+
+    def test_exec_runs_the_script_in_the_environment_and_never_reaches_other_branches(self):
+        self.addCleanup(os.chdir, os.getcwd())
+        calls = []
+        exists = Path.exists
+        with patch('sys.argv', ['control', 'exec', self.identity, 'echo "$LAMP_ID"']), \
+             patch.object(Path, 'exists', lambda path: str(path) == '/.dockerenv' or exists(path)), \
+             patch.object(control.os, 'execvp', lambda *arguments: (calls.append(arguments), (_ for _ in ()).throw(SystemExit(0)))), \
+             patch.object(control, 'remove', side_effect=AssertionError('exec must not remove')), \
+             patch.object(control, 'write_desired', side_effect=AssertionError('exec must not write')), \
+             patch.object(control, 'read_desired', side_effect=AssertionError('exec must not read the desired state')), \
+             contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+            control.main()
+        self.assertEqual(1, len(calls))
+        self.assertEqual(('bash', ['bash', '-c', 'set -e\necho "$LAMP_ID"']), calls[0])
+        self.assertEqual(str(self.project), os.getcwd())
 
     def test_access_exports_only_required_headers_for_the_exact_environment(self):
         folder = control.CONFIGURATION / 'cloudflare'
