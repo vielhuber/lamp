@@ -34,9 +34,9 @@ class HostnamesTest(unittest.TestCase):
         identity = 'abcdef012345'
         value = control.validate_specification({'subdomain': ['one', 'two']})
         with tempfile.TemporaryDirectory() as directory, patch.object(control, 'CONFIGURATION', Path(directory)):
-            control.write_desired({identity: value}, None)
-            desired, original = control.read_desired()
-            self.assertEqual(['one', 'two'], desired[identity]['subdomain'])
+            control.write_desired([value], None)
+            entries, original = control.read_desired()
+            self.assertEqual(['one', 'two'], entries[0]['subdomain'])
             self.assertEqual(original, (Path(directory) / 'environments.yaml').read_bytes())
 
     def test_explicit_subdomains_collide_with_other_hosts_and_aliases(self):

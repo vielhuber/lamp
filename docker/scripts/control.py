@@ -298,11 +298,10 @@ def ordered_settings(settings):
             if key not in ("php", "build", "aliases") or settings.get(key) is not None}
 
 
-def write_desired(value, original):
+def write_desired(entries, original):
     path = CONFIGURATION / "environments.yaml"
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as temporary:
-        yaml.safe_dump({identity: ordered_settings(settings) for identity, settings in value.items()},
-                      temporary, sort_keys=False, allow_unicode=True)
+        yaml.safe_dump([ordered_settings(entry) for entry in entries], temporary, sort_keys=False, allow_unicode=True)
     try:
         if (path.read_bytes() if path.exists() else None) != original:
             raise ValueError("environments.yaml changed concurrently; retry without overwriting the edit.")
@@ -314,25 +313,53 @@ def write_desired(value, original):
 def read_desired():
     path = CONFIGURATION / "environments.yaml"
     if not path.exists():
-        value = {item["id"]: validate_specification(specification(item)) for item in environments()}
-        write_desired(value, None)
+        write_desired([entry for entry in (validate_specification(specification(item)) for item in environments()) if subdomain_labels(entry)], None)
     original = path.read_bytes()
     node = yaml.compose(original, Loader=yaml.SafeLoader)
-    if not isinstance(node, yaml.MappingNode):
-        raise ValueError("environments.yaml must contain an ID-to-settings mapping; use {} to remove all environments, not an empty file.")
-    for mapping in [node, *(settings for _, settings in node.value)]:
+    legacy = isinstance(node, yaml.MappingNode)
+    if not isinstance(node, (yaml.SequenceNode, yaml.MappingNode)):
+        raise ValueError("environments.yaml must contain a list of static environments; use [] for none, not an empty file.")
+    for mapping in ([settings for _, settings in node.value] if legacy else node.value):
         if not isinstance(mapping, yaml.MappingNode):
             raise ValueError("Each environment must contain a settings mapping.")
         keys = [key.value for key, _ in mapping.value if isinstance(key, yaml.ScalarNode) and key.tag == "tag:yaml.org,2002:str"]
         if len(keys) != len(mapping.value) or len(set(keys)) != len(keys):
-            raise ValueError("YAML keys must be unique strings; quote numeric environment IDs. Merge keys are not supported.")
+            raise ValueError("YAML keys must be unique strings; merge keys are not supported.")
     value = yaml.safe_load(original)
-    desired = {validate_identity(identity): validate_specification(migrate_specification(settings)) for identity, settings in value.items()}
-    if any(list(settings) != list(ordered_settings(desired[identity])) for identity, settings in value.items()):
-        write_desired(desired, original)
+    raw = list(value.values()) if legacy else value
+    entries = [validate_specification(migrate_specification(settings)) for settings in raw]
+    if legacy:
+        # Older files were keyed by ID and listed dynamic environments; those live in the runtime state only now.
+        entries = [entry for entry in entries if subdomain_labels(entry)]
+    if any(not subdomain_labels(entry) for entry in entries):
+        raise ValueError("environments.yaml lists static environments only; every entry needs a subdomain. Create dynamic environments with lamp add.")
+    if any(entry in entries[index + 1:] for index, entry in enumerate(entries)):
+        raise ValueError("environments.yaml contains the same environment twice.")
+    if legacy or any(list(settings) != list(ordered_settings(entry)) for settings, entry in zip(raw, entries)):
+        write_desired(entries, original)
         original = path.read_bytes()
     path.chmod(0o600)
-    return desired, original
+    return entries, original
+
+
+def desired_state(entries, current=None):
+    if current is None:
+        current = {item["id"]: item for item in environments()}
+    desired = {}
+    pending = list(entries)
+    for identity, environment in current.items():
+        applied = specification(environment)
+        if not subdomain_labels(applied):
+            desired[identity] = applied
+        elif applied in pending:
+            pending.remove(applied)
+            desired[identity] = applied
+    for entry in pending:
+        identity = uuid.uuid4().hex[:12]
+        while identity in desired or (STATE / "environments" / identity).exists():
+            identity = uuid.uuid4().hex[:12]
+        desired[identity] = entry
+    return desired
 
 
 def check_checkout(environment, desired):
@@ -1051,7 +1078,8 @@ def main():
     settings = configuration()
     with (STATE / "control.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        desired, original = read_desired()
+        entries, original = read_desired()
+        desired = desired_state(entries)
         validate_domains(desired, settings)
         if arguments.command == "validate":
             reconcile(settings, desired, validate_only=True)
@@ -1174,9 +1202,11 @@ def main():
                     base = arguments.base if "refs/heads/" + arguments.base in refs else "origin/" + arguments.base
                     command = ["git", "switch", "--no-overwrite-ignore", "--create", arguments.branch, base]
                 run(command, cwd=project)
-            desired[arguments.id]["branch"] = arguments.branch
+            applied = specification(environment)
             try:
-                write_desired(desired, original)
+                if applied in entries:
+                    entries[entries.index(applied)] = {**applied, "branch": arguments.branch}
+                    write_desired(entries, original)
             except (OSError, ValueError):
                 if previous_branch != arguments.branch:
                     rollback = ["git", "branch", "--move", previous_branch] if arguments.operation == "rename" else ["git", "switch", "--no-overwrite-ignore", previous_branch]
@@ -1193,53 +1223,63 @@ def main():
             if arguments.base_branch:
                 run(["git", "check-ref-format", "--branch", arguments.base_branch])
             requested = validate_specification({key: getattr(arguments, key) for key in ("git", *ENVIRONMENT_DEFAULTS)})
-            if arguments.id and identity in desired:
-                if any(desired[identity].get(key) != requested[key]
+            if arguments.id and (STATE / "environments" / identity / "environment.json").is_file():
+                existing = load_environment(identity)
+                applied = specification(existing)
+                if any(applied.get(key) != requested[key]
                        for key in ("git", *ENVIRONMENT_DEFAULTS) if getattr(arguments, key) is not None):
                     raise ValueError("Environment ID already exists with different settings.")
-                existing = load_environment(identity)
                 if existing["status"] != "ready":
                     raise ValueError("Environment exists but is not ready; inspect and repair it before retrying.")
                 if not environment_project(existing).is_dir():
                     raise ValueError("Environment project directory is missing.")
-                if existing.get("git") and run(["git", "branch", "--show-current"], cwd=environment_project(existing), capture=True).strip() != desired[identity]["branch"]:
+                if existing.get("git") and run(["git", "branch", "--show-current"], cwd=environment_project(existing), capture=True).strip() != applied["branch"]:
                     raise ValueError("The checkout branch differs from its configuration; select the branch through lamp branch before retrying.")
                 print(json.dumps(show(existing), indent=4))
                 return
+            static = bool(subdomain_labels(requested))
+            if static and requested in entries:
+                listed = next(key for key, value in desired.items() if value == requested)
+                if (STATE / "environments" / listed / "environment.json").is_file():
+                    existing = load_environment(listed)
+                    if existing["status"] == "ready":
+                        print(json.dumps(show(existing), indent=4))
+                        return
+                    raise ValueError("This environment is listed and exists but is not ready; restart to retry, or remove it.")
+                desired.pop(listed)
+                identity = arguments.id or listed
+            elif static:
+                entries.append(requested)
             while identity in desired or (STATE / "environments" / identity).exists():
                 if arguments.id:
                     raise ValueError("Environment ID already exists; reconcile its configuration first.")
                 identity = uuid.uuid4().hex[:12]
             desired[identity] = requested
             validate_domains(desired, settings)
-            requested_hosts = set(environment_hostnames(identity, desired[identity], settings))
+            requested_hosts = set(environment_hostnames(identity, requested, settings))
             if any(requested_hosts & set(hostnames(item)) for item in environments()):
                 raise ValueError("The requested domain is still assigned to an existing environment; reconcile or remove it first.")
-            write_desired(desired, original)
+            if static:
+                write_desired(entries, original)
             result = add(arguments, settings, identity)
         elif arguments.command == "reconcile":
             reconcile(settings, desired)
             return
         elif arguments.command == "build":
             identity = validate_identity(arguments.id)
-            if identity not in desired:
-                raise ValueError("Environment not found.")
             environment = load_environment(identity)
+            if identity not in desired:
+                raise ValueError("Environment is not listed in environments.yaml; add its entry or remove the environment.")
             if resolve_build(desired[identity])[0] is None:
                 raise ValueError("Environment has no build; add a repository script in .data/build or a build setting.")
             result = add(argparse.Namespace(**desired[identity]), settings, identity, environment)
         else:
             identity = validate_identity(arguments.id)
-            exists = (STATE / "environments" / identity / "environment.json").is_file()
-            if identity not in desired and not exists:
-                raise ValueError("Environment not found.")
-            desired.pop(identity, None)
-            write_desired(desired, original)
-            if exists:
-                result = remove(identity)
-            else:
-                sync_visibility(settings, desired, identities={identity}, publish=False)
-                result = {"id": identity, "status": "removed"}
+            applied = specification(load_environment(identity))
+            if applied in entries:
+                entries.remove(applied)
+                write_desired(entries, original)
+            result = remove(identity)
         print(json.dumps(result, indent=4))
 
 

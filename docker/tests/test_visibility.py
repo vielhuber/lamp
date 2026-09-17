@@ -181,15 +181,10 @@ class VisibilityTest(unittest.TestCase):
         control.sync_visibility(self.settings, {}, identities={'123456abcdef'})
         self.assertEqual(2, len(self.apps))
 
-    def test_remove_cleans_exception_even_without_runtime_record(self):
+    def test_reconciliation_cleans_exception_even_without_runtime_record(self):
         control.sync_visibility(self.settings, self.desired)
-        control.write_desired(self.desired, None)
-        exists = Path.exists
-        with patch.object(control, 'configuration', return_value=self.settings), \
-             patch.object(control.sys, 'argv', ['control', 'remove', self.identity]), \
-             patch.object(Path, 'exists', lambda path: str(path) == '/.dockerenv' or exists(path)), \
-             contextlib.redirect_stdout(io.StringIO()):
-            control.main()
+        self.assertEqual(2, len(self.apps))
+        control.sync_visibility(self.settings, {})
         self.assertEqual([self.wildcard], self.apps)
 
     def test_foreign_specific_application_is_not_modified(self):

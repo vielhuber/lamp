@@ -250,30 +250,31 @@ vpn:
 
 <summary>environments</summary>
 
-- `.data/environments.yaml` is the desired state; `start` / `restart` reconcile it, `add` / `remove` edit it
-- ids: twelve lowercase hex characters (quote all-numeric ids); `add` generates one unless `--id` is given
-- `add --id` is idempotent: identical settings return the existing environment, different settings fail
+- `.data/environments.yaml` is a list of the static environments, without ids; `start` / `restart` reconcile it, `add --subdomain` appends to it, `remove` deletes from it
+- an entry and a running environment are the same when every value matches; changing any value in the file removes the old environment (owned databases included, static directories stay) and provisions a new one
+- dynamic environments (`add` without `--subdomain`) live in the runtime state only, are never written to the file and are never touched by `start` / `restart`; remove them with `lamp remove <id>`
+- ids are runtime identifiers reported by `add`, `show` and `list`; `add --id` reuses one and is idempotent: identical settings return the existing environment, different settings fail
+- a file from the previous id-keyed format is converted on first use; its dynamic entries are dropped from the file, the environments themselves stay
 
 ```yaml
-abcdef123456:
-    git: git@github.com:<owner>/<project>.git
-    branch: feature/XYZ
-    subdomain: project
-    aliases: [shop, blog]
-    webroot: public
-    php: '8.5'
-    vpn: null
-    proxy_port: null
-    proxy_exclude: null
-    visibility: private
-    build: 'syncdb project-production-local && composer install'
+- git: git@github.com:<owner>/<project>.git
+  branch: feature/XYZ
+  subdomain: project
+  aliases: [shop, blog]
+  webroot: public
+  php: '8.5'
+  vpn: null
+  proxy_port: null
+  proxy_exclude: null
+  visibility: private
+  build: 'syncdb project-production-local && composer install'
 ```
 
 | key             | default | meaning                                                                                        |
 | --------------- | ------- | ---------------------------------------------------------------------------------------------- |
 | `git`           | null    | ssh `git@host:path` or credential-free https url; null for an empty environment                |
 | `branch`        | null    | null selects the repository default branch                                                     |
-| `subdomain`     | null    | one lowercase label or a list; first label is the primary host and the static project path     |
+| `subdomain`     | required | one lowercase label or a list; first label is the primary host and the static project path    |
 | `aliases`       | omitted | suffixes: `<primary>-<suffix>.<domain>` share the same checkout and databases                  |
 | `webroot`       | null    | directory relative to the checkout; null picks `public/` or `web/` with `index.php`, else root |
 | `php`           | omitted | explicit version; omitted reads the repository root `.phprc`, else `8.5`                       |
@@ -287,9 +288,10 @@ abcdef123456:
 - existing directories are adopted without clone, pull, checkout or chown; missing directories are cloned
 - `remove` deletes the project directory only for dynamic environments; static directories always stay
 - hostnames: `<subdomain-or-id>.<domain>`; every hostname must be unique; `phpmyadmin` is reserved; no nested subdomains
-- changing `subdomain` to another project path needs a new environment
-- reconciliation: new ids are provisioned; changed settings rerun the build (including every `syncdb` import); visibility-only or alias-only changes do not; git/branch changes fetch and switch but refuse dirty or unpublished checkouts; missing ids are removed (`{}` removes all, an empty file is invalid)
+- reconciliation: entries without a matching environment are provisioned, including database initialization, imports and the build; environments without a matching entry are removed; a changed build script reruns the build of every environment using it; `[]` removes all static environments, an empty file is invalid
+- `lamp branch <id> <branch>` switches the checkout and updates the entry's `branch` in the file, so the environment keeps matching
 - failed environments keep status `failed` and are not served; fix the yaml and `restart`, or `build <id>`, or `remove`
+- `reset` deletes the runtime state: static environments are re-registered from the file on the next `start`, dynamic environments are gone and their directories under `/var/www/_environments/` become orphans
 - `show`, `list`, `add`, `build <id>` return json without passwords or build commands
 
 </details>

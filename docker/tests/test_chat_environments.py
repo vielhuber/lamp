@@ -47,7 +47,7 @@ class ChatEnvironmentsTest(unittest.TestCase):
         }
         (control.STATE / 'environments' / self.identity).mkdir(parents=True)
         control.save_environment(self.environment)
-        control.write_desired({self.identity: self.desired}, None)
+        control.write_desired([], None)
 
     def git(self, *arguments):
         return subprocess.run(['git', '-C', str(self.project), *arguments], capture_output=True, text=True, check=True).stdout.strip()
@@ -127,12 +127,19 @@ class ChatEnvironmentsTest(unittest.TestCase):
             database.assert_not_called()
             add.assert_not_called()
         self.assertEqual('feature/renamed', self.git('branch', '--show-current'))
-        desired, _ = control.read_desired()
-        self.assertEqual('feature/renamed', desired[self.identity]['branch'])
+        self.assertEqual([], control.read_desired()[0])
         self.assertEqual('feature/renamed', control.load_environment(self.identity)['checkout']['branch'])
         self.assertEqual(self.git('rev-parse', 'HEAD'), control.load_environment(self.identity)['commit'])
 
     def test_failed_configuration_write_restores_previous_branch(self):
+        project = control.PROJECTS / 'demo'
+        self.project.rename(project)
+        self.project = project
+        listed = {**self.desired, 'subdomain': 'demo'}
+        self.environment.update(path=str(project), subdomain='demo', applied=dict(listed),
+                                project_identity=[project.stat().st_dev, project.stat().st_ino])
+        control.save_environment(self.environment)
+        control.write_desired([listed], control.read_desired()[1])
         with patch.object(control, 'write_desired', side_effect=ValueError('concurrent edit')):
             with self.assertRaisesRegex(ValueError, 'concurrent edit'):
                 self.invoke('branch', self.identity, 'feature/existing')
@@ -181,26 +188,21 @@ class ChatEnvironmentsTest(unittest.TestCase):
         self.environment['visibility'] = 'public'
         self.environment['applied']['visibility'] = 'public'
         control.save_environment(self.environment)
-        self.desired['visibility'] = 'public'
-        _, original = control.read_desired()
-        control.write_desired({self.identity: self.desired}, original)
         self.assertEqual({}, self.invoke('access', self.identity)['headers'])
         self.assertEqual('public', self.invoke('add', '--id', self.identity)['visibility'])
         with self.assertRaisesRegex(ValueError, 'different settings'):
             self.invoke('add', '--id', self.identity, '--visibility', 'private')
 
     def test_idempotent_add_preserves_unspecified_custom_configuration(self):
-        self.desired['webroot'] = 'public'
-        _, original = control.read_desired()
-        control.write_desired({self.identity: self.desired}, original)
+        self.environment['applied']['webroot'] = 'public'
+        control.save_environment(self.environment)
         with patch.object(control, 'add') as add:
             self.assertEqual(self.identity, self.invoke('add', '--id', self.identity,
                              '--git', self.desired['git'], '--branch', 'main')['id'])
             add.assert_not_called()
         with self.assertRaisesRegex(ValueError, 'different settings'):
             self.invoke('add', '--id', self.identity, '--webroot', 'other')
-        desired, _ = control.read_desired()
-        self.assertEqual('public', desired[self.identity]['webroot'])
+        self.assertEqual('public', control.load_environment(self.identity)['applied']['webroot'])
 
 
 if __name__ == '__main__':

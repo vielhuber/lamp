@@ -74,7 +74,7 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertEqual('keep', original.read_text())
         self.run.reset_mock()
         self.invoke('add', '--id', self.identity)
-        control.reconcile(self.settings, control.read_desired()[0])
+        control.reconcile(self.settings, control.desired_state(control.read_desired()[0]))
         self.assertFalse(any(call.args[0][0] in ('bash', 'chown', 'mysql', 'psql') for call in self.run.call_args_list))
 
     def test_yaml_add_uses_repository_script_without_changing_existing_git_checkout(self):
@@ -85,16 +85,16 @@ class EnvironmentSetupTest(unittest.TestCase):
         script.parent.mkdir()
         script.write_text('printf built > build-result.txt\n')
         value = control.validate_specification({'git': remote, 'subdomain': 'existing'})
-        control.write_desired({self.identity: value}, None)
+        control.write_desired([value], None)
         self.run.side_effect = self.execute_build
-        control.reconcile(self.settings, control.read_desired()[0])
+        control.reconcile(self.settings, control.desired_state(control.read_desired()[0]))
         self.assertEqual('built', (project / 'build-result.txt').read_text())
         self.assertFalse(any(call.args[0][0] in ('git', 'chown') for call in self.run.call_args_list))
         self.run.reset_mock()
-        control.reconcile(self.settings, control.read_desired()[0])
+        control.reconcile(self.settings, control.desired_state(control.read_desired()[0]))
         self.assertFalse(any(call.args[0][0] == 'bash' for call in self.run.call_args_list))
         script.write_text('printf changed > build-result.txt\n')
-        control.reconcile(self.settings, control.read_desired()[0])
+        control.reconcile(self.settings, control.desired_state(control.read_desired()[0]))
         self.assertEqual('changed', (project / 'build-result.txt').read_text())
 
     def test_failed_existing_project_build_retries_without_recreating_databases(self):
@@ -172,26 +172,27 @@ class EnvironmentSetupTest(unittest.TestCase):
         project = control.PROJECTS / 'legacy'
         project.mkdir()
         value = control.validate_specification({'subdomain': 'legacy', 'build': 'printf built > build-result.txt'})
-        control.write_desired({self.identity: value}, None)
-        control.reconcile(self.settings, control.read_desired()[0])
-        environment = control.load_environment(self.identity)
+        control.write_desired([value], None)
+        control.reconcile(self.settings, control.desired_state(control.read_desired()[0]))
+        environment = control.environments()[0]
+        identity = environment['id']
         for key in ('engine', 'database', 'setup_environment', 'build_hash', 'mysql_database', 'postgres_database'):
             environment[key] = None
         environment['mysql_owned'] = environment['postgres_owned'] = environment['databases_ready'] = False
         control.save_environment(environment)
         self.run.side_effect = self.execute_build
-        result = json.loads(self.invoke('build', self.identity))
-        environment = control.load_environment(self.identity)
+        result = json.loads(self.invoke('build', identity))
+        environment = control.load_environment(identity)
         self.assertEqual('built', (project / 'build-result.txt').read_text())
         self.assertEqual('ready', result['status'])
         self.assertTrue(environment['databases_ready'])
         self.assertTrue(Path(environment['setup_environment']).is_file())
         (project / 'build-result.txt').unlink()
         self.run.reset_mock()
-        control.reconcile(self.settings, control.read_desired()[0])
+        control.reconcile(self.settings, control.desired_state(control.read_desired()[0]))
         self.assertFalse((project / 'build-result.txt').exists())
         self.assertFalse(any(call.args[0][0] in ('bash', 'mysql', 'psql') for call in self.run.call_args_list))
-        self.invoke('build', self.identity)
+        self.invoke('build', identity)
         self.assertEqual('built', (project / 'build-result.txt').read_text())
         self.assertFalse(any(call.args[0][0] in ('mysql', 'psql') for call in self.run.call_args_list))
 
@@ -211,21 +212,19 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertEqual('ready', control.load_environment(self.identity)['status'])
 
     def test_build_command_requires_configured_build_and_known_environment(self):
-        control.write_desired({self.identity: control.validate_specification({'subdomain': 'plain'})}, None)
+        control.write_desired([control.validate_specification({'subdomain': 'plain'})], None)
         (control.PROJECTS / 'plain').mkdir()
-        control.reconcile(self.settings, control.read_desired()[0])
+        control.reconcile(self.settings, control.desired_state(control.read_desired()[0]))
         with self.assertRaisesRegex(ValueError, 'has no build'):
-            self.invoke('build', self.identity)
+            self.invoke('build', control.environments()[0]['id'])
         with self.assertRaisesRegex(ValueError, 'not found'):
             self.invoke('build', 'abcdef012346')
 
     def test_list_search_filters_environments_by_any_value(self):
         other = 'abcdef012346'
         (control.PROJECTS / 'alpha').mkdir()
-        desired = {self.identity: control.validate_specification({'subdomain': ['alpha', 'beta']}),
-                   other: control.validate_specification({'php': '8.3'})}
-        control.write_desired(desired, None)
-        control.reconcile(self.settings, control.read_desired()[0])
+        control.reconcile(self.settings, {self.identity: control.validate_specification({'subdomain': ['alpha', 'beta']}),
+                                          other: control.validate_specification({'php': '8.3'})})
         self.assertEqual(2, len(json.loads(self.invoke('list'))))
         self.assertEqual([self.identity], [item['id'] for item in json.loads(self.invoke('list', '--search', 'ALPHA'))])
         self.assertEqual([self.identity], [item['id'] for item in json.loads(self.invoke('list', '--search', 'beta.example.test'))])
