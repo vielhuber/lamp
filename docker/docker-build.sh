@@ -14,6 +14,9 @@ export PATH="/root/.local/bin:/root/.cargo/bin:/root/.opencode/bin:$PATH"
 php_versions=(5.6 7.0 7.1 7.2 7.3 7.4 8.0 8.1 8.2 8.3 8.4 8.5)
 build_directory=$(mktemp -d /tmp/lamp-build.XXXXXXXX)
 cd "$build_directory"
+# Third-party download servers fail sporadically (HTTP 5xx, resets); retry every curl of this build, and only of this build.
+export CURL_HOME=$build_directory
+printf 'retry = 5\nretry-delay = 10\nretry-all-errors\n' > "$build_directory/.curlrc"
 step_number=0
 step_total=$(grep -c "^step '" "${BASH_SOURCE[0]}")
 step_started=$SECONDS
