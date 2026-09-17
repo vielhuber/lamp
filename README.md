@@ -38,7 +38,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `mkdir lamp && cd lamp`
 - `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init` (copies `lamp` and `docker/docker-compose.yml` out of the image)
-- `./lamp setup` (creates `.data` with a commented `config.yaml`, an empty `environments.yaml`, example files for syncdb, build scripts and the access service token, and `docker/docker-compose.override.yml` with the projects mount; never overwrites)
+- `./lamp docker-setup` (creates `.data` with a commented `config.yaml`, an empty `environments.yaml`, example files for syncdb, build scripts and the access service token, and `docker/docker-compose.override.yml` with the projects mount; never overwrites)
 - optional: change the host side of the projects mount in `docker/docker-compose.override.yml`; the container side stays `/var/www`
 - set `domain` in `.data/config.yaml`
 - put ssh keys into `.data/ssh/`, syncdb profiles into `.data/syncdb/`, build scripts into `.data/build/`
@@ -100,28 +100,26 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary><strong>commands</strong></summary>
 
-| command                                                                 | effect                                                                              |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `./lamp setup`                                                          | create `.data` with commented presets, example files and the compose override; keeps existing files |
-| `./lamp start`                                                          | start container, wait for health, apply `.data/environments.yaml`                   |
-| `./lamp restart`                                                        | validate yaml, stop, start, apply                                                   |
-| `./lamp stop`                                                           | stop container, keep all data                                                       |
-| `./lamp status [--json]`                                                | container state, health, ports, supervised services                                 |
-| `./lamp version [--json]`                                               | host checkout version and container image id                                        |
-| `./lamp docker-build`                                                   | rebuild the image without layer cache, keep volumes (requires stopped container)    |
-| `./lamp build <id>`                                                     | rerun the configured build of one environment inside the running container          |
-| `./lamp docker-reset`                                                   | **delete all compose volumes**, then rebuild the image (requires stopped container) |
-| `./lamp add [--git <url>] [--id <12-hex>] [--branch <b>] [--base-branch <b>] [--php <v>] [--vpn <name>] [--build "<cmd>"] [--subdomain <label>] [--directory <name>] [--alias <suffix>]… [--webroot <dir>] [--proxy-port <port>] [--proxy-exclude </path>] [--visibility private\|public]` | create environment, returns json |
-| `./lamp remove <id>`                                                    | remove environment, owned databases, runtime data; dynamic project directory only   |
-| `./lamp list [--search <term>]`                                         | all environments as json; `--search` filters case-insensitively over all values     |
-| `./lamp show <id>`                                                      | one environment as json                                                             |
-| `./lamp branch <id> <branch> [--base <b>] [--operation switch\|rename]` | switch or create branch without rebuild                                             |
-| `./lamp exec "<command>"`                                               | run a command in the container                                                      |
-| `./lamp exec --environment <id> -- <cmd>`                               | run in the project directory with its php, setup variables and authenticated `curl` |
-| `./lamp curl <id> -- <curl args>`                                       | curl the environment's exact https origin with the access service token             |
-| `./lamp access <id>`                                                    | origin and access headers as json; secret, for trusted integrations only            |
-| `./lamp ssh`                                                            | interactive root shell in the container                                             |
-
+| command | effect |
+| --- | --- |
+| `./lamp start` | start container, wait for health, apply `.data/environments.yaml` |
+| <code>./lamp add \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--git &lt;url&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--id &lt;12-hex&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--branch &lt;b&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--base-branch &lt;b&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--php &lt;v&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--vpn &lt;name&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--build "&lt;cmd&gt;" \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--subdomain &lt;label&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--directory &lt;name&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--alias &lt;suffix&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--webroot &lt;dir&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--proxy-port &lt;port&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--proxy-exclude &lt;/path&gt; \ <br>&nbsp;&nbsp;&nbsp;&nbsp;--visibility private\|public</code> | create environment, returns json; every option is optional; `--subdomain` records a static entry in `.data/environments.yaml`, without it the environment is dynamic; `--alias` is repeatable |
+| `./lamp stop` | stop container, keep all data |
+| `./lamp restart` | validate yaml, stop, start, apply |
+| `./lamp status [--json]` | container state, health, ports, supervised services |
+| `./lamp version [--json]` | host checkout version and container image id |
+| `./lamp build <id>` | rerun the configured build of one environment inside the running container |
+| `./lamp list [--search <term>]` | all environments as json; `--search` filters case-insensitively over all values |
+| `./lamp show <id>` | one environment as json |
+| `./lamp branch <id> <branch> [--base <b>] [--operation switch\|rename]` | switch or create branch without rebuild |
+| `./lamp exec [<id>] "<command>"` | with an id: in the project directory with its php, setup variables and authenticated `curl`; without: as root in the container |
+| `./lamp curl <id> -- <curl args>` | curl the environment's exact https origin with the access service token |
+| `./lamp access <id>` | origin and access headers as json; secret, for trusted integrations only |
+| `./lamp remove <id>` | remove environment, owned databases, runtime data; dynamic project directory only |
+| `./lamp ssh` | interactive root shell in the container |
+| `./lamp docker-build` | rebuild the image without layer cache, keep volumes (requires stopped container) |
+| `./lamp docker-setup` | create `.data` with commented presets, example files and the compose override; keeps existing files |
+| `./lamp docker-reset` | **delete all compose volumes**, then rebuild the image (requires stopped container) |
 </details>
 
 <details>
@@ -239,7 +237,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>configuration</summary>
 
-- `./lamp setup` writes `.data/config.yaml` (mode 600) with `domain` set and every optional section as a commented example
+- `./lamp docker-setup` writes `.data/config.yaml` (mode 600) with `domain` set and every optional section as a commented example
 
 | key                     | default               | effect                                                                                       |
 | ----------------------- | --------------------- | -------------------------------------------------------------------------------------------- |
@@ -265,7 +263,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - ids are runtime identifiers reported by `add`, `show` and `list`; `add --id` reuses one and is idempotent: identical settings return the existing environment, different settings fail
 - a file from the previous id-keyed format is converted on first use; its dynamic entries are dropped from the file, the environments themselves stay
 
-- `./lamp setup` writes an empty `.data/environments.yaml` with a commented example entry; the first `add` or reconciliation rewrites the file without comments
+- `./lamp docker-setup` writes an empty `.data/environments.yaml` with a commented example entry; the first `add` or reconciliation rewrites the file without comments
 
 | key             | default | meaning                                                                                        |
 | --------------- | ------- | ---------------------------------------------------------------------------------------------- |
@@ -303,7 +301,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - runs on first registration (also for adopted directories), when settings change, when the script content hash changes, and on `./lamp build <id>`
 - complete output goes to `/var/lib/lamp/environments/<id>/build.log` (mode 600); the path is printed at start and in the failure message
 - no build runs without a script or `build` setting
-- `./lamp setup` writes the example `.data/build/github.com-owner-project.sh`: syncdb import, `.env` created from an embedded heredoc with `APP_URL` and `DB_*` rewritten from the setup variables, then composer and npm; copy it per project and keep only the steps the project has
+- `./lamp docker-setup` writes the example `.data/build/github.com-owner-project.sh`: syncdb import, `.env` created from an embedded heredoc with `APP_URL` and `DB_*` rewritten from the setup variables, then composer and npm; copy it per project and keep only the steps the project has
 
 | variable                                    | value                                                         |
 | ------------------------------------------- | ------------------------------------------------------------- |
@@ -331,7 +329,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - all web requests use php-fpm; no `mod_php`
 - selection: explicit `php` → repository root `.phprc` (one installed version, e.g. `8.3`) → `8.5`; invalid `.phprc` fails the setup
-- default cli php in a plain shell is 8.1; `exec --environment` and builds use the environment's version
+- default cli php in a plain shell is 8.1; `exec <id>` and builds use the environment's version
 - shared `/etc/php/custom.ini` (linked into every version's cli and fpm): 4096M memory, 4800s execution time, 800M uploads, opcache with 2s revalidation, apcu, `variables_order = EGPCS`, xdebug 3 (xdebug 2 for 5.6–7.1) in `debug,profile` mode with trigger start, port 9003, profiles in `/tmp/xdebug`
 - xdebug client host defaults to `localhost` inside the container; set `xdebug.client_host` for an ide on the host (`host.docker.internal` on docker desktop)
 - `uopz` is installed but disabled; jit is disabled
@@ -409,7 +407,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>service token (harness)</summary>
 
 - created during [installation › 4. cloudflare access](#installation)
-- `./lamp curl <id> -- -fsS https://<hostname>/` and the `curl` wrapper inside `exec --environment` send the headers only to that environment's exact https origin, never follow redirects with credentials, and refuse unsupported options
+- `./lamp curl <id> -- -fsS https://<hostname>/` and the `curl` wrapper inside `exec <id>` send the headers only to that environment's exact https origin, never follow redirects with credentials, and refuse unsupported options
 - `./lamp access <id>` prints origin and headers as json for trusted integrations; keep it out of visible tool calls and logs
 - public environments send no token; their own application logins still apply
 
@@ -437,7 +435,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `lamp status --json` / `lamp version --json` return `root`, `state`, `healthy`, `api` (cli contract number, currently `1`)
 - `lamp add --id <id> --git <url> --branch <b> --base-branch main` creates or returns the environment; missing remote branches start from `--base-branch`
-- `lamp exec --environment <id> -- bash -c 'npm test'` runs in the checkout with the right php and database variables (use `bash -c`, not a login shell)
+- `lamp exec <id> "npm test"` runs the command in the checkout with the right php and database variables
 - `lamp branch <id> <branch> --base main` switches without rebuild; dirty checkouts are refused, ignored files are never overwritten
 - `lamp build <id>` reruns the project build on demand; `lamp list --search <term>` finds environments by any value
 - keep environments until their files and databases have been reviewed; archiving a chat does not require `remove`
@@ -472,7 +470,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>vpn</summary>
 
-- the `vpn` section of `.data/config.yaml` lists tunnels with `name`, `type` (`openvpn` or `wireguard`), `config`, optional `username` / `password`, `routes` and `hosts`; `./lamp setup` leaves a commented example in the file
+- the `vpn` section of `.data/config.yaml` lists tunnels with `name`, `type` (`openvpn` or `wireguard`), `config`, optional `username` / `password`, `routes` and `hosts`; `./lamp docker-setup` leaves a commented example in the file
 
 - profiles in `.data/vpn/` (mode 600); names: lowercase, max twelve characters, letter first
 - `./lamp restart` applies changes; `./lamp exec 'supervisorctl start|stop|status vpn-office'` controls a tunnel

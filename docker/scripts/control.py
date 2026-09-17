@@ -1011,7 +1011,7 @@ def main():
         commands.add_parser(command).add_argument("id")
     execute = commands.add_parser("exec")
     execute.add_argument("id", type=validate_identity)
-    execute.add_argument("arguments", nargs=argparse.REMAINDER)
+    execute.add_argument("command")
     branch = commands.add_parser("branch")
     branch.add_argument("id", type=validate_identity)
     branch.add_argument("branch")
@@ -1041,15 +1041,9 @@ def main():
         environment = load_environment(arguments.id)
         if environment["status"] != "ready":
             raise ValueError("Environment is not ready.")
-        command = arguments.arguments
-        if command[:1] == ["--"]:
-            command = command[1:]
-        if not command:
-            raise ValueError("An executable and its arguments are required.")
         os.chdir(environment_project(environment))
         setup = environment.get("setup_environment")
-        script = ("source " + shlex.quote(setup) + "\n" if setup else "") + 'exec "$@"'
-        os.execvp("bash", ["bash", "-c", "set -e\n" + script, "lamp", *command])
+        os.execvp("bash", ["bash", "-c", "set -e\n" + ("source " + shlex.quote(setup) + "\n" if setup else "") + arguments.command])
     if arguments.command == "syncdb":
         # The parent build already holds control.lock while this child performs the import.
         environment = load_environment(os.environ.get("LAMP_ID"))

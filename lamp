@@ -7,12 +7,12 @@ if (( $# )); then shift; fi
 json=false
 if [[ "$command" = status || "$command" = version ]] && [[ "${1:-}" = --json ]]; then json=true; shift; fi
 if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
-    printf '%s\n' 'Usage: lamp setup|docker-build|docker-reset|build <id>|start|restart|stop|status [--json]|version [--json]|add|remove <id>|list [--search <term>]|show <id>|ssh|exec "command"' \
-        'setup creates .data with a commented config.yaml, an empty environments.yaml, example files for syncdb, build scripts and the Access service token, and docker/docker-compose.override.yml with the projects mount; existing files are kept.' \
+    printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build <id>|list [--search <term>]|show <id>|branch|exec [<id>] "<command>"|curl|access <id>|remove <id>|ssh|docker-build|docker-setup|docker-reset' \
+        'docker-setup creates .data with a commented config.yaml, an empty environments.yaml, example files for syncdb, build scripts and the Access service token, and docker/docker-compose.override.yml with the projects mount; existing files are kept.' \
         'build <id> reruns the configured build of an existing environment inside the running container; docker-build rebuilds the image without layer cache.' \
         'list --search <term> returns only environments whose values contain the term (case-insensitive).' \
         'add [--git <repository>] [--id <12-hex-id>] [--branch <branch>] [--base-branch <branch>] [--php <version>] [--vpn <profile>] [--build <command>] [--subdomain <label>] [--directory <name>] [--alias <suffix> ...] [--webroot <directory>] [--proxy-port <port>] [--proxy-exclude <path>] [--visibility private|public]' \
-        'exec --environment <id> -- <executable> [arguments...]' \
+        'exec [<id>] "<command>": with an id inside that environment (project directory, its php, database variables, authenticated curl), without an id as root in the container.' \
         'branch <id> <branch> [--base <branch>] [--operation switch|rename]' \
         'curl <id> -- <curl arguments>; access <id> (secret JSON for trusted integrations only)' \
         'Visibility defaults to private; public creates a hostname-specific Cloudflare Access bypass.' \
@@ -23,15 +23,16 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
     exit 0
 fi
 case "$command" in
-    setup|docker-build|docker-reset|start|restart|stop|status|version|ssh) test "$#" -eq 0 ;;
+    docker-setup|docker-build|docker-reset|start|restart|stop|status|version|ssh) test "$#" -eq 0 ;;
     build) test "$#" -eq 1 ;;
     list) test "$#" -eq 0 || [[ "$#" = 2 && "$1" = --search ]] ;;
     remove|show|access) test "$#" -eq 1 ;;
-    exec|curl|branch) ;;
+    exec) test "$#" -ge 1 && test "$#" -le 2 ;;
+    curl|branch) ;;
     add) ;;
     *) printf 'Unknown command: %s\n' "$command" >&2; exit 2 ;;
 esac
-if [[ "$command" = setup ]]; then
+if [[ "$command" = docker-setup ]]; then
     data="$directory/.data"
     preset() {
         local path=$1 mode=$2
@@ -258,7 +259,7 @@ fi
 mkdir -p "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/cliproxyapi" "$LAMP_DATA_DIR/build"
 chmod 700 "$LAMP_DATA_DIR" "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/cliproxyapi" "$LAMP_DATA_DIR/build"
 if [[ ! -f "$LAMP_DATA_DIR/config.yaml" || ! -f "$directory/docker/docker-compose.override.yml" ]]; then
-    printf '%s\n' 'Missing .data/config.yaml or docker/docker-compose.override.yml. Run ./lamp setup first.' >&2
+    printf '%s\n' 'Missing .data/config.yaml or docker/docker-compose.override.yml. Run ./lamp docker-setup first.' >&2
     exit 1
 fi
 # environments belong to www-data while harnesses run as root on the host
@@ -312,11 +313,9 @@ case "$command" in
     stop) "${compose[@]}" stop ;;
     ssh) "${compose[@]}" exec app bash -il ;;
     exec)
-        if [[ "${1:-}" = --environment ]]; then
-            shift
-            "${compose[@]}" exec -T app python3 /opt/lamp/control.py exec "$@"
+        if [[ "$#" = 2 ]]; then
+            "${compose[@]}" exec -T app python3 /opt/lamp/control.py exec "$1" "$2"
         else
-            test "$#" -eq 1
             "${compose[@]}" exec -T app bash -lc "$1"
         fi
         ;;
