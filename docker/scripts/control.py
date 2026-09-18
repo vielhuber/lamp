@@ -1141,7 +1141,8 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
                     # the complete output goes to the log and to the terminal at the same time.
                     master, slave = pty.openpty()
                     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 160, 0, 0))
-                    process = subprocess.Popen(["bash", "-c", "set -e\nsource " + shlex.quote(environment["setup_environment"]) + "\n" + build],
+                    # set -x after setup.env: every build command is echoed, the variable exports are not
+                    process = subprocess.Popen(["bash", "-c", "set -e\nsource " + shlex.quote(environment["setup_environment"]) + "\nset -x\n" + build],
                                                cwd=project, env={**os.environ, "TERM": "xterm-256color", **variables},
                                                stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, close_fds=True)
                     os.close(slave)
