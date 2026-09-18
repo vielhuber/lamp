@@ -79,7 +79,7 @@ def resolve_identity(value):
 def configuration():
     value = yaml.safe_load((CONFIGURATION / "config" / "settings.yaml").read_text())
     sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname", "relayhost", "username", "password"),
-                "cloudflare": ("token", "email"), "database": ("password",)}
+                "cloudflare": ("token", "email"), "database": ("password",), "composer": ("github",)}
     if (not isinstance(value, dict) or "domain" not in value or set(value) - {"domain", "vpn", "php", *sections}
             or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", "php", *sections))):
         raise ValueError("settings.yaml must contain domain and optionally git, apache, postfix, cloudflare, database, php and vpn mappings; see README.md.")
@@ -94,7 +94,7 @@ def configuration():
         entries = value.get(section) or {}
         if (set(entries) - set(keys)
                 or any(not isinstance(entry, str) or not entry.strip() or re.search(r"[\r\n\0]", entry) for entry in entries.values())
-                or any(re.search(r"\s", entries[key]) for key in ("admin", "hostname", "relayhost", "token", "email") if key in entries)
+                or any(re.search(r"\s", entries[key]) for key in ("admin", "hostname", "relayhost", "token", "email", "github") if key in entries)
                 or (section == "cloudflare" and entries and (set(entries) != set(keys) or "@" not in entries["email"]))
                 or ("hostname" in entries and not re.fullmatch(dns_name, entries["hostname"]))
                 or ("relayhost" in entries and not re.fullmatch(r"\[?[A-Za-z0-9.-]+\]?(?::[0-9]{1,5})?", entries["relayhost"]))
@@ -106,6 +106,11 @@ def configuration():
 def apply_settings(settings):
     # xdebug stays loaded in trigger mode unless php.xdebug is false; the module is toggled for every php version, cli and fpm.
     run(["phpenmod" if (settings.get("php") or {}).get("xdebug", True) else "phpdismod", "-v", "ALL", "-s", "ALL", "xdebug"])
+    github = (settings.get("composer") or {}).get("github")
+    if github:
+        run(["composer", "config", "--global", "github-oauth.github.com", github])
+    else:
+        subprocess.run(["composer", "config", "--global", "--unset", "github-oauth.github.com"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     identity = settings.get("git") or {}
     for key in ("name", "email"):
         if key in identity:

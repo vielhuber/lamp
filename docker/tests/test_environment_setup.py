@@ -300,11 +300,12 @@ class EnvironmentSetupTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Build log: .*/environments/abcdef012345/build.log'):
             control.reconcile(self.settings, {self.identity: value})
         log = control.STATE / 'environments' / self.identity / 'build.log'
-        self.assertEqual('progress\nproblem\n', log.read_text())
+        self.assertIn('+ echo progress\nprogress\n', log.read_text())
+        self.assertIn('problem\n', log.read_text())
         self.assertEqual(0o600, log.stat().st_mode & 0o777)
         value['build'] = 'echo fixed'
         control.reconcile(self.settings, {self.identity: value})
-        self.assertEqual('fixed\n', log.read_text())
+        self.assertIn('fixed\n', log.read_text())
         self.assertEqual('ready', control.load_environment(self.identity)['status'])
 
     def test_build_command_requires_configured_build_and_known_environment(self):

@@ -44,14 +44,14 @@ class SettingsTest(unittest.TestCase):
                      'postfix: {relayhost: "smtp://x"}', 'postfix: {relayhost: "[a.test]:587", username: "u"}',
                      'postfix: {username: "u", password: "p"}', 'cloudflare: {token: t}', 'cloudflare: {token: "a b", email: x@y}',
                      'cloudflare: {token: t, email: nomail}', 'database: {user: x}', 'database: {password: ""}', 'php: {xdebug: "no"}',
-                     'php: {jit: true}', 'unknown: 1']:
+                     'php: {jit: true}', 'composer: {token: x}', 'composer: {github: "a b"}', 'unknown: 1']:
             with self.subTest(text=text), self.assertRaises(ValueError):
                 (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\n' + text + '\n')
                 control.configuration()
 
     def test_settings_are_applied_and_fall_back_to_defaults(self):
         control.apply_settings({'domain': 'example.test', 'git': {'name': 'Jane Doe', 'email': 'jane@example.test'},
-                                'apache': {'admin': 'admin@example.test'},
+                                'apache': {'admin': 'admin@example.test'}, 'composer': {'github': 'ghp_test'},
                                 'postfix': {'hostname': 'mail.example.test', 'relayhost': '[smtp.example.test]:587', 'username': 'jane', 'password': 'p:w'}})
         commands = [call.args[0] for call in self.run.call_args_list]
         self.assertEqual('[smtp.example.test]:587 jane:p:w\n', control.SASL_PASSWORD.read_text())
@@ -59,6 +59,7 @@ class SettingsTest(unittest.TestCase):
         self.assertIn(['postmap', str(control.SASL_PASSWORD)], commands)
         self.assertIn(['git', 'config', '--global', 'user.name', 'Jane Doe'], commands)
         self.assertIn(['phpenmod', '-v', 'ALL', '-s', 'ALL', 'xdebug'], commands)
+        self.assertIn(['composer', 'config', '--global', 'github-oauth.github.com', 'ghp_test'], commands)
         self.assertIn(['git', 'config', '--global', 'user.email', 'jane@example.test'], commands)
         self.assertIn(['postconf', '-e', 'myhostname = mail.example.test', 'relayhost = [smtp.example.test]:587'], commands)
         self.assertEqual('Timeout 3000\nServerAdmin admin@example.test\nServerName localhost\n', control.APACHE_SETTINGS.read_text())
@@ -67,6 +68,7 @@ class SettingsTest(unittest.TestCase):
         with patch.object(control.subprocess, 'run') as unset:
             control.apply_settings({'domain': 'example.test'})
         self.assertEqual({'user.name', 'user.email'}, {call.args[0][-1] for call in unset.call_args_list if '--unset-all' in call.args[0]})
+        self.assertIn(['composer', 'config', '--global', '--unset', 'github-oauth.github.com'], [call.args[0] for call in unset.call_args_list])
         self.assertFalse(any(call.args[0][:2] == ['git', 'config'] for call in self.run.call_args_list))
         self.run.reset_mock()
         with patch.object(control.subprocess, 'run'):

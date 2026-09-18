@@ -82,6 +82,10 @@ cloudflare:
 php:
     xdebug: false
 
+# optional: github token for composer (private repositories, api rate limit), applied on every start
+# composer:
+#     github: '<TOKEN>'
+
 # optional: password of mysql root and postgres, applied on every start; default: generated once per installation
 # database:
 #     password: '<PASSWORD>'

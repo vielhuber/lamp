@@ -261,6 +261,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `postfix.username`, `postfix.password` | unset                   | smtp auth for the relay; written to `/etc/postfix/sasl_passwd` (mode 600) on every start                         |
 | `cloudflare.token`, `cloudflare.email` | unset                   | api token used by `cloudflare-setup`, `add`, `remove`, `start`, `restart`, and the login email allowed by access |
 | `database.password`     | generated once        | password of mysql `root` and postgres `postgres`, applied on `start` / `restart` to the servers, `/var/lib/lamp/secrets/database-password`, the vhost variables and `setup.env` |
+| `composer.github`       | unset                 | github token written to composer's global `auth.json` on `start` / `restart` for private packages and the api rate limit |
 | `php.xdebug`            | true (`docker-setup` preset: false) | false removes the xdebug module from every php version on `start` / `restart`, about 15 percent faster requests, no debugging or profiling |
 | `vpn`                                  | disabled                | see [vpn](#vpn)                                                                                                  |
 
