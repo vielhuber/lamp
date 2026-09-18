@@ -56,7 +56,8 @@ try:
         if kind not in ("openvpn", "wireguard") or not isinstance(tunnel.get("config"), str):
             raise ValueError("Invalid tunnel type or profile")
         profile = Path(tunnel["config"]).resolve()
-        if not profile.is_relative_to(profiles) or not profile.is_file():
+        # /etc/lamp may be a link to the clone of the data repository
+        if not profile.is_relative_to(profiles.resolve()) or not profile.is_file():
             raise ValueError("Profiles must be files below /etc/lamp/vpn")
         content = profile.read_text()
         hosts = tunnel.get("hosts", {})

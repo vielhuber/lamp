@@ -106,7 +106,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `./lamp ssh [<id\|subdomain>]`                                                     | interactive root shell in the container; with an environment: in its project directory with its variables, `git status` first                                            |
 | `./lamp cloudflare-setup`                                                          | create or verify tunnel, wildcard dns, access application, service token and cache rule; prints `ok`, `created`, `updated`, `rotated` or `recreated` per item            |
 | `./lamp docker-build`                                                              | rebuild the image without layer cache, keep volumes (requires stopped container)                                                                                         |
-| `./lamp docker-setup [<data repository>]`                                          | create `.config` and `.data` with commented presets, example files and the compose override; keeps existing files; with a data repository `.data` is left to the clone   |
+| `./lamp docker-setup [<data repository>]`                                          | create `.config` and `.data` with commented presets, example files and the compose override; keeps existing files; with a data repository no `.data` is created          |
 | `./lamp docker-reset`                                                              | **delete all compose volumes**, then rebuild the image (requires stopped container)                                                                                      |
 
 ```bash
@@ -234,7 +234,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `/var/www`                           | project checkouts; host directory set in `docker/docker-compose.override.yml`     | yes                     |
 | compose volumes                      | mysql, postgresql, redis, apache sites, mail, certificates, `/var/lib/lamp` state | **no**                  |
 
-- `.data` is mounted at `/etc/lamp`, `.data/ssh` at `/root/.ssh`, `.config` at `/etc/lamp-config`
+- `.data` is mounted at `/etc/lamp` by `docker/docker-compose.data.yml`, which the cli loads only without a [data repository](#data-repository); `.config` is mounted at `/etc/lamp-config`; `/root/.ssh` links to `/etc/lamp/ssh`
 - `.data` holds what several hosts can share, `.config` what belongs to this host; lamp writes only to `.config`
 - `.data`, `.config` and `.logs` are excluded from git and from the image
 - back up `.data`, `.config` and database-consistent dumps separately; `docker-reset` is not an update that preserves environments
@@ -251,7 +251,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | key in `setup.yaml` | default  | effect                                                                                       |
 | ------------------- | -------- | -------------------------------------------------------------------------------------------- |
 | `domain`            | required | base domain of every environment; a change reapplies all environments on `start` / `restart` |
-| `data`              | unset    | ssh url of the private [data repository](#data-repository) that holds `.data`                |
+| `data`              | unset    | ssh url of the private [data repository](#data-repository) that replaces `.data`             |
 
 | key in `settings.yaml`                 | default                             | effect                                                                                                                                                                          |
 | -------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -275,12 +275,13 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>data repository</summary>
 
-- `data: git@github.com:<owner>/lamp-data.git` in `.config/setup.yaml` makes `.data` a clone of that private repository: `settings.yaml`, `ssh/`, `vpn/`, `build/`, `syncdb/` are the same on every host, only `.config` differs
-- `./lamp docker-setup <url>` writes the entry and leaves `.data` to the clone; an existing `.data` that is no clone stops `start` until it is moved away
-- first `start`, `restart` or `cloudflare-setup`: lamp clones on the host; when the host's own ssh identity may not read the repository, it asks once for a private key on the terminal (not echoed, not stored, not logged)
-- every further `start` / `restart` / `cloudflare-setup`: `git pull --ff-only` with `.data/ssh/id_rsa`; a failed pull (offline, diverged, conflicting local edits) prints a warning and continues with the local state
-- lamp never commits or pushes: edit build scripts and profiles in any clone (also directly in `.data`), commit and push there, the other hosts receive them on their next start
-- after every clone and pull the folder is set to owner-only modes, because git stores no private modes and ssh refuses readable keys
+- `data: git@github.com:<owner>/lamp-data.git` in `.config/setup.yaml` replaces the `.data` folder by that private repository: `settings.yaml`, `ssh/`, `vpn/`, `build/`, `syncdb/` are the same on every host, only `.config` differs
+- lamp keeps its own clone inside the container at `/var/lib/lamp/data` (state volume), `/etc/lamp` links to it; nothing appears on the host; `docker-reset` deletes it with the rest of the state, the next `start` asks for the key again
+- maintain the data in a normal clone anywhere (e.g. `/var/www/lamp-data`), commit and push; lamp never commits or pushes
+- `./lamp docker-setup <url>` writes the entry and creates no `.data`; switching an existing installation needs `./lamp stop` and `./lamp start`
+- first `start`, `restart` or `cloudflare-setup`: lamp asks once on the terminal for a private ssh key that may read the repository (not echoed, not logged, handed to the container through a pipe and deleted after the clone)
+- `start`, `restart`, `cloudflare-setup`, `build`, `syncdb` and `add` mirror the repository first (`git fetch` and `git reset --hard` with `ssh/id_rsa` of the clone), so a pushed build script is used by the next `./lamp build <id>` without a restart; when the fetch fails, a warning is printed and the last state is used
+- after every clone and fetch the folder is set to owner-only modes, because git stores no private modes and ssh refuses readable keys
 - the repository contains private keys, vpn profiles, api tokens and production database credentials; keep it private
 
 </details>

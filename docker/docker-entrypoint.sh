@@ -2,6 +2,11 @@
 set -euo pipefail
 
 if [[ "${1:-}" != init ]]; then
+    # without a mounted .data folder /etc/lamp is the clone of the data repository inside the state volume
+    if ! mountpoint -q /etc/lamp; then
+        rm -rf /etc/lamp
+        ln -s /var/lib/lamp/data /etc/lamp
+    fi
     exec "$@"
 fi
 
@@ -14,19 +19,19 @@ if [[ ! -d /install ]]; then
     exit 1
 fi
 
-# init only ships the host cli and compose file; .data and .config are never touched, so it also refreshes an existing installation.
+# init only ships the host cli and compose files; .data and .config are never touched, so it also refreshes an existing installation.
 temporary_directory="/install/.lamp-init.$$"
 trap 'rm -rf "$temporary_directory"' EXIT INT TERM
 mkdir "$temporary_directory" "$temporary_directory/docker"
 cp /app/lamp "$temporary_directory/lamp"
-cp /app/docker/docker-compose.yml "$temporary_directory/docker/docker-compose.yml"
+cp /app/docker/docker-compose.yml /app/docker/docker-compose.data.yml "$temporary_directory/docker/"
 chmod 755 "$temporary_directory/lamp"
 if [[ "$(id -u)" -eq 0 ]]; then
     chown -hR "$(stat -c '%u:%g' /install)" "$temporary_directory"
 fi
 mkdir -p /install/docker
 mv -f "$temporary_directory/lamp" /install/lamp
-mv -f "$temporary_directory/docker/docker-compose.yml" /install/docker/docker-compose.yml
+mv -f "$temporary_directory/docker/docker-compose.yml" "$temporary_directory/docker/docker-compose.data.yml" /install/docker/
 rm -rf "$temporary_directory"
 trap - EXIT INT TERM
 

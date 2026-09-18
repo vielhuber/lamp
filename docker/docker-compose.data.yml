@@ -1,0 +1,5 @@
+# loaded by the host cli when no data repository is configured: the .data folder is the container's /etc/lamp
+services:
+    app:
+        volumes:
+            - ../.data:/etc/lamp

@@ -30,9 +30,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends openvpn wiregua
 
 COPY --chmod=755 docker/docker-entrypoint.sh docker/docker-start.sh ./
 COPY docker/scripts/ /opt/lamp/
-# Shipped for `docker run ... init`, which copies the host cli and compose file out of a pulled image.
+# Shipped for `docker run ... init`, which copies the host cli and compose files out of a pulled image.
 COPY lamp ./lamp
-COPY docker/docker-compose.yml ./docker/docker-compose.yml
+COPY docker/docker-compose.yml docker/docker-compose.data.yml ./docker/
 
 ENV PATH="/root/.local/bin:/root/.cargo/bin:/root/.opencode/bin:/root/.syncdb/vendor/bin:/root/.git-filter-repo:${PATH}:/opt/lamp/node-tools" \
     LANG=en_US.UTF-8 \

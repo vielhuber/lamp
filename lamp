@@ -245,7 +245,7 @@ services:
             #       create_host_path: false
 PRESET
     if [[ -n "$data_repository" ]]; then
-        printf '%s\n' 'next: set domain in .config/setup.yaml, then ./lamp cloudflare-setup (clones .data first) and ./lamp start'
+        printf '%s\n' 'next: set domain in .config/setup.yaml, then ./lamp cloudflare-setup (asks once for a key and clones the data) and ./lamp start'
     else
         printf '%s\n' 'next: set domain in .config/setup.yaml, cloudflare.token and cloudflare.email in .data/settings.yaml, then ./lamp cloudflare-setup and ./lamp start'
     fi
@@ -284,7 +284,6 @@ if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = sta
     trap 'finish_log 143' TERM
     printf '[%s] %s started\nLog: %s\n' "$(date -u +%FT%TZ)" "$command" "$log_file"
 fi
-export LAMP_DATA_DIR="$directory/.data"
 export LAMP_CONFIG_DIR="$directory/.config"
 # interactive calls get a terminal inside the container (progress bars); piped calls stay plain
 tty=(-T)
@@ -343,6 +342,8 @@ mkdir -p "$LAMP_CONFIG_DIR/cloudflare"
 chmod 700 "$LAMP_CONFIG_DIR" "$LAMP_CONFIG_DIR/cloudflare"
 data_repository=$(sed -n 's/^data:[[:space:]]*//p' "$LAMP_CONFIG_DIR/setup.yaml" | sed "s/[[:space:]]*\(#.*\)\?$//; s/^[\"']//; s/[\"']$//")
 if [[ "$data_repository" = null || "$data_repository" = '~' ]]; then data_repository=; fi
+# without a data repository the .data folder is mounted at /etc/lamp
+if [[ -z "$data_repository" ]]; then compose+=(-f "$directory/docker/docker-compose.data.yml"); fi
 # environments belong to www-data while harnesses run as root on the host
 if [[ "$command" = start || "$command" = add ]] && ! git config --global --get-all safe.directory | grep -qx '\*'; then
     git config --global --add safe.directory '*'
@@ -374,42 +375,54 @@ case "$command" in
         esac
         ;;
 esac
-# .data as a clone of the private data repository: cloned once with a pasted key, pulled with its own key afterwards
-if [[ -n "$data_repository" ]] && [[ "$command" = start || "$command" = restart || "$command" = cloudflare-setup ]]; then
-    if [[ -d "$LAMP_DATA_DIR/.git" ]]; then
-        GIT_SSH_COMMAND="ssh -i $(printf %q "$LAMP_DATA_DIR/ssh/id_rsa") -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
-            git -C "$LAMP_DATA_DIR" pull --quiet --ff-only \
-            || printf 'Warning: .data could not be updated from %s; continuing with the local state.\n' "$data_repository" >&2
-    elif [[ -e "$LAMP_DATA_DIR" ]]; then
-        printf '.data exists but is not a clone of %s. Move it away (its content belongs into that repository) and run the command again.\n' "$data_repository" >&2
-        exit 1
-    elif ! GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new' git clone --quiet "$data_repository" "$LAMP_DATA_DIR" 2> /dev/null; then
-        if ! { : < /dev/tty; } 2> /dev/null; then
-            printf 'The first clone of %s needs a terminal to ask for a private ssh key.\n' "$data_repository" >&2
-            exit 1
-        fi
-        key_file=$(mktemp)
-        stty -echo < /dev/tty
-        printf 'Paste a private ssh key that may read %s (used once for the first clone, not stored):\n' "$data_repository" > /dev/tty
-        while IFS= read -r line < /dev/tty; do
-            printf '%s\n' "$line" >> "$key_file"
-            if [[ "$line" = -----END*PRIVATE\ KEY----- ]]; then break; fi
-        done
-        stty echo < /dev/tty
-        clone_result=0
-        GIT_SSH_COMMAND="ssh -i $key_file -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" git clone --quiet "$data_repository" "$LAMP_DATA_DIR" || clone_result=$?
-        rm -f "$key_file"
-        if [[ "$clone_result" != 0 ]]; then
-            printf 'The data repository could not be cloned with this key.\n' >&2
-            exit 1
-        fi
-    fi
-    # git keeps no private modes; ssh refuses keys that others can read
-    chmod -R go= "$LAMP_DATA_DIR"
+# with a data repository /etc/lamp is a clone inside the container (state volume): cloned once with a pasted key, mirrored from the repository afterwards
+if [[ -n "$data_repository" ]]; then
+    case "$command" in
+        start|restart|cloudflare-setup|build|syncdb|add)
+            # a one-off container sees the mounts of the next start; build, syncdb and add need the running container anyway
+            in_container=("${compose[@]}" run --rm --no-deps -T app)
+            if [[ "$command" = build || "$command" = syncdb || "$command" = add ]]; then in_container=("${compose[@]}" exec -T app); fi
+            data_result=0
+            "${in_container[@]}" bash -c 'set -euo pipefail
+                if [[ ! -d /var/lib/lamp/data/.git ]]; then exit 3; fi
+                export GIT_SSH_COMMAND="ssh -i /var/lib/lamp/data/ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/var/lib/lamp/data/ssh/known_hosts"
+                if git -C /var/lib/lamp/data fetch --quiet origin && git -C /var/lib/lamp/data reset --quiet --hard "@{upstream}"; then
+                    # git keeps no private modes; ssh refuses keys that others can read
+                    chmod -R go= /var/lib/lamp/data
+                else
+                    printf "Warning: the data repository could not be fetched; continuing with the last state.\n" >&2
+                fi' < /dev/null || data_result=$?
+            if [[ "$data_result" = 3 ]]; then
+                if ! { : < /dev/tty; } 2> /dev/null; then
+                    printf 'The first clone of %s needs a terminal to ask for a private ssh key.\n' "$data_repository" >&2
+                    exit 1
+                fi
+                stty -echo < /dev/tty
+                printf 'Paste a private ssh key that may read %s (used once for the first clone, not stored):\n' "$data_repository" > /dev/tty
+                data_result=0
+                while IFS= read -r line < /dev/tty; do
+                    printf '%s\n' "$line"
+                    if [[ "$line" = -----END*PRIVATE\ KEY----- ]]; then break; fi
+                done | "${in_container[@]}" bash -c 'set -euo pipefail
+                    umask 077
+                    trap "rm -f /dev/shm/lamp-data-key" EXIT
+                    cat > /dev/shm/lamp-data-key
+                    GIT_SSH_COMMAND="ssh -i /dev/shm/lamp-data-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR" git clone --quiet "$1" /var/lib/lamp/data
+                    chmod -R go= /var/lib/lamp/data' lamp "$data_repository" || data_result=$?
+                stty echo < /dev/tty
+                if [[ "$data_result" != 0 ]]; then
+                    printf 'The data repository could not be cloned with this key.\n' >&2
+                    exit 1
+                fi
+            elif [[ "$data_result" != 0 ]]; then
+                exit "$data_result"
+            fi
+            ;;
+    esac
 fi
 if [[ -z "$data_repository" ]]; then
-    mkdir -p "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/build"
-    chmod 700 "$LAMP_DATA_DIR" "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/build"
+    mkdir -p "$directory/.data/ssh" "$directory/.data/syncdb" "$directory/.data/build"
+    chmod 700 "$directory/.data" "$directory/.data/ssh" "$directory/.data/syncdb" "$directory/.data/build"
 fi
 case "$command" in
     docker-build) "${compose[@]}" build --no-cache ;;

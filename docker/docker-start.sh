@@ -5,6 +5,8 @@ test -f /.dockerenv
 umask 022
 mkdir -p /etc/lamp /etc/lamp/ssh
 chmod 700 /etc/lamp/ssh
+rm -rf /root/.ssh
+ln -s /etc/lamp/ssh /root/.ssh
 if [[ ! -f /etc/lamp-config/setup.yaml ]]; then
     printf '%s\n' 'Missing /etc/lamp-config/setup.yaml. Create .config/setup.yaml on the host as documented in README.md.' >&2
     exit 1
