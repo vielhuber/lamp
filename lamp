@@ -97,6 +97,9 @@ PRESET
 #   branch: null
 #   subdomain: project
 #   aliases: [shop, blog]
+#   directory: project
+#   db_name: project
+#   db_engine: mysql
 #   webroot: public
 #   php: '8.5'
 #   vpn: null

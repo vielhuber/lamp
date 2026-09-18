@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
@@ -62,8 +63,8 @@ class DesiredFileTest(unittest.TestCase):
         text = self.file.read_text()
         self.assertTrue(text.startswith('- '))
         self.assertNotIn('abcdef012345', text)
-        self.assertEqual([{'git': None, 'branch': None, 'subdomain': 'one', 'webroot': None, 'php': '8.3', 'vpn': None,
-                           'proxy_port': None, 'proxy_exclude': None, 'visibility': 'private'}], yaml.safe_load(text))
+        self.assertEqual([{'git': None, 'branch': None, 'subdomain': 'one', 'directory': 'one', 'db_name': None, 'db_engine': None, 'webroot': None,
+                           'php': '8.3', 'vpn': None, 'proxy_port': None, 'proxy_exclude': None, 'visibility': 'private'}], yaml.safe_load(text))
 
     def test_dynamic_entries_duplicates_and_empty_files_are_rejected(self):
         for text in ['- git: null\n  branch: main\n', '- subdomain: one\n- subdomain: one\n', '', 'one: two\n', '- [one]\n']:
@@ -168,7 +169,7 @@ class DesiredFileTest(unittest.TestCase):
         self.assertNotEqual(first['id'], second[0]['id'])
         self.assertEqual('8.4', second[0]['php'])
         self.assertTrue((control.PROJECTS / 'site').is_dir())
-        self.assertEqual(2, sum('DROP DATABASE' in call.kwargs.get('input', '') for call in self.run.call_args_list))
+        self.assertEqual(0, sum('DROP DATABASE' in call.kwargs.get('input', '') for call in self.run.call_args_list))
 
 
 if __name__ == '__main__':

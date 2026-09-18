@@ -143,6 +143,7 @@ class VisibilityTest(unittest.TestCase):
             self.assertEqual(labels, environment['applied']['subdomain'])
             self.assertEqual(str(project), environment['path'])
         self.value['subdomain'] = ['other', 'demo']
+        self.value['directory'] = 'other'
         self.current = [environment]
         with patch.object(control, 'sync_visibility') as sync, self.assertRaisesRegex(ValueError, 'project directory'):
             control.reconcile(self.settings, self.desired)

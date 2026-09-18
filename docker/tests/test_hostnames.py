@@ -1,5 +1,4 @@
 import importlib.util
-import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -29,7 +28,7 @@ class HostnamesTest(unittest.TestCase):
         self.assertEqual('https://ai.example.test', control.environment_url('abcdef012345', value, settings))
         with tempfile.TemporaryDirectory() as directory, patch.object(control, 'PROJECTS', Path(directory)):
             self.assertEqual(Path(directory) / 'aistats', control.project_path('abcdef012345', value))
-        self.assertNotIn('directory', control.ordered_settings(control.validate_specification({'subdomain': 'ai'})))
+        self.assertEqual('ai', control.ordered_settings(control.validate_specification({'subdomain': 'ai'}))['directory'])
         self.assertEqual('aistats', control.ordered_settings(value)['directory'])
         nested = control.validate_specification({'subdomain': 'tour', 'directory': 'tourconcept/new'})
         with tempfile.TemporaryDirectory() as directory, patch.object(control, 'PROJECTS', Path(directory)):

@@ -28,9 +28,10 @@ ENABLED = Path("/etc/apache2/sites-enabled")
 APACHE_SETTINGS = Path("/etc/apache2/conf-available/lamp.conf")
 MAILNAME = Path("/etc/mailname")
 SASL_PASSWORD = Path("/etc/postfix/sasl_passwd")
+DATABASE_ENGINES = ("mysql", "postgres", "sqlite")
 PHP_VERSIONS = ("5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5")
-ENVIRONMENT_DEFAULTS = {"branch": None, "subdomain": None, "aliases": None, "directory": None, "webroot": None, "php": None,
-                        "vpn": None, "proxy_port": None, "proxy_exclude": None, "visibility": "private", "build": None}
+ENVIRONMENT_DEFAULTS = {"branch": None, "subdomain": None, "aliases": None, "directory": None, "db_name": None, "db_engine": None,
+                        "webroot": None, "php": None, "vpn": None, "proxy_port": None, "proxy_exclude": None, "visibility": "private", "build": None}
 
 
 def write_json(path, value):
@@ -125,8 +126,20 @@ def save_environment(environment):
 
 
 def specification(environment):
-    return {**ENVIRONMENT_DEFAULTS, **migrate_specification(environment.get("applied") or {
-        key: environment.get(key, default) for key, default in {"git": None, "syncdb": None, **ENVIRONMENT_DEFAULTS}.items()})}
+    return explicit_directory({**ENVIRONMENT_DEFAULTS, **migrate_specification(environment.get("applied") or {
+        key: environment.get(key, default) for key, default in {"git": None, "syncdb": None, **ENVIRONMENT_DEFAULTS}.items()})})
+
+
+def explicit_directory(value):
+    # Static entries always name their folder; the first subdomain label is the default.
+    labels = subdomain_labels(value)
+    if labels and value.get("directory") is None:
+        value["directory"] = labels[0]
+    return value
+
+
+def root_password():
+    return (STATE / "secrets" / "database-password").read_text().strip()
 
 
 def migrate_specification(value):
@@ -146,7 +159,7 @@ def migrate_specification(value):
 
 def validate_specification(value):
     if not isinstance(value, dict) or set(value) - {"git", *ENVIRONMENT_DEFAULTS}:
-        raise ValueError("Environment settings must contain only git, branch, php, build, subdomain, aliases, directory, webroot, proxy_port, proxy_exclude, vpn and visibility.")
+        raise ValueError("Environment settings must contain only git, branch, php, build, subdomain, aliases, directory, db_name, db_engine, webroot, proxy_port, proxy_exclude, vpn and visibility.")
     value = {**ENVIRONMENT_DEFAULTS, **value}
     if value["visibility"] is None:
         value["visibility"] = "private"
@@ -165,6 +178,16 @@ def validate_specification(value):
     if value["php"] is not None and value["php"] not in PHP_VERSIONS:
         raise ValueError("Invalid PHP version; quote PHP versions in YAML.")
     labels = subdomain_labels(value)
+    explicit_directory(value)
+    if (value["db_name"] is None) != (value["db_engine"] is None):
+        raise ValueError("db_name and db_engine need each other.")
+    if value["db_name"] is not None:
+        if not labels:
+            raise ValueError("db_name is for static environments; dynamic environments get isolated databases.")
+        if value["db_engine"] not in DATABASE_ENGINES:
+            raise ValueError("db_engine must be mysql, postgres or sqlite.")
+        if not isinstance(value["db_name"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}", value["db_name"]):
+            raise ValueError("db_name must be a database name of letters, digits, underscores and hyphens.")
     if value["directory"] is not None and (not labels or not isinstance(value["directory"], str)
                                            or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}(?:/[a-z0-9][a-z0-9_-]{0,62}){0,3}", value["directory"])):
         raise ValueError("directory must be a lowercase folder path under /var/www without parent segments and requires a subdomain.")
@@ -312,7 +335,7 @@ def validate_domains(desired, settings):
 
 def ordered_settings(settings):
     return {key: settings.get(key) for key in ("git", *ENVIRONMENT_DEFAULTS)
-            if key not in ("php", "build", "aliases", "directory") or settings.get(key) is not None}
+            if key not in ("php", "build", "aliases") or settings.get(key) is not None}
 
 
 def write_desired(entries, original):
@@ -632,6 +655,18 @@ def sync_visibility(settings, desired, *, identities=None, publish=True):
 
 def database(environment, remove=False):
     name = "lamp_" + validate_identity(environment["id"])
+    if subdomain_labels(environment) and not remove:
+        # The fixed database is created when missing and never touched otherwise; lamp never drops it.
+        engine, fixed = environment.get("db_engine"), environment.get("db_name")
+        if engine == "mysql":
+            run(["mysql"], input=f"CREATE DATABASE IF NOT EXISTS `{fixed}`;\n")
+        elif engine == "postgres":
+            existing = run(["psql", "-X", "-U", "postgres", "-d", "postgres", "-At"], input=f"SELECT datname FROM pg_database WHERE datname='{fixed}';\n", capture=True)
+            if not existing.strip():
+                run(["psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"], input=f'CREATE DATABASE "{fixed}";\n')
+        elif engine == "sqlite":
+            Path(sqlite_path(environment)).touch(mode=0o644, exist_ok=True)
+        return
     password = environment["password"]
     if not re.fullmatch(r"[a-f0-9]{48}", password):
         raise ValueError("Invalid generated database password.")
@@ -657,19 +692,45 @@ def database(environment, remove=False):
         f"CREATE ROLE \"{name}\" LOGIN PASSWORD '{password}';\nCREATE DATABASE \"{name}\" OWNER \"{name}\";\nREVOKE CONNECT, TEMPORARY ON DATABASE \"{name}\" FROM PUBLIC;\n")
 
 
-def build_environment(environment):
-    name = "lamp_" + environment["id"]
+def sqlite_path(environment):
+    return str(STATE / "environments" / environment["id"] / "data" / (environment["db_name"] + ".sqlite"))
+
+
+def environment_variables(environment):
     directory = STATE / "environments" / environment["id"]
     variables = {
         "LAMP_ID": environment["id"], "LAMP_URL": environment["url"], "APP_URL": environment["url"],
         "LAMP_PROJECT_DIR": environment["path"], "LAMP_DATA_DIR": str(directory / "data"),
+    }
+    if subdomain_labels(environment):
+        # Static environments use one fixed database of their own name, reachable with the root account.
+        engine = environment.get("db_engine")
+        if engine == "mysql":
+            variables.update({"DB_CONNECTION": "mysql", "DB_HOST": "localhost", "DB_PORT": "3306", "DB_DATABASE": environment["db_name"],
+                              "DB_USERNAME": "root", "DB_PASSWORD": root_password()})
+        elif engine == "postgres":
+            password = root_password()
+            variables.update({"DB_CONNECTION": "pgsql", "DB_HOST": "localhost", "DB_PORT": "5432", "DB_DATABASE": environment["db_name"],
+                              "DB_USERNAME": "postgres", "DB_PASSWORD": password, "PGHOST": "localhost", "PGPORT": "5432",
+                              "PGDATABASE": environment["db_name"], "PGUSER": "postgres", "PGPASSWORD": password})
+        elif engine == "sqlite":
+            variables.update({"DB_CONNECTION": "sqlite", "DB_DATABASE": sqlite_path(environment)})
+        return variables
+    name = "lamp_" + environment["id"]
+    variables.update({
         "DB_CONNECTION": environment["engine"], "DB_HOST": "localhost", "DB_PORT": "3306",
         "DB_DATABASE": name, "DB_USERNAME": name, "DB_PASSWORD": environment["password"],
         "PGHOST": "localhost", "PGPORT": "5432", "PGDATABASE": name, "PGUSER": name,
         "PGPASSWORD": environment["password"],
-    }
+    })
     if environment["engine"] == "sqlite":
         variables["DB_DATABASE"] = str(directory / "data" / "database.sqlite")
+    return variables
+
+
+def build_environment(environment):
+    directory = STATE / "environments" / environment["id"]
+    variables = environment_variables(environment)
     bin_directory = directory / "bin"
     bin_directory.mkdir(exist_ok=True)
     php = bin_directory / "php"
@@ -707,6 +768,19 @@ def sync_database(environment, profile_name):
         raise ValueError("syncdb currently supports mysql and sqlite, not PostgreSQL.")
     if not isinstance(profile.get("source"), dict):
         raise ValueError("The syncdb profile needs a source object.")
+    if subdomain_labels(environment):
+        engine = environment.get("db_engine")
+        if engine is None:
+            raise ValueError("Set db_name and db_engine for this environment before importing.")
+        if engine != profile["engine"]:
+            raise ValueError(f"The syncdb profile is for {profile['engine']} but the environment uses {engine}.")
+        if engine == "mysql":
+            profile["target"] = {"host": "localhost", "port": "3306", "database": environment["db_name"], "username": "root",
+                                 "password": root_password(), "ssh": False, "cmd": "mysql", "sql_log_bin": False}
+        else:
+            profile["target"] = {"database": sqlite_path(environment), "ssh": False}
+        run_sync(environment, profile)
+        return
     environment["engine"] = profile["engine"]
     name = "lamp_" + environment["id"]
     if environment["engine"] == "mysql":
@@ -716,6 +790,10 @@ def sync_database(environment, profile_name):
     else:
         profile["target"] = {"database": str(STATE / "environments" / environment["id"] / "data" / "database.sqlite"), "ssh": False}
     environment["database"] = profile["target"]["database"]
+    run_sync(environment, profile)
+
+
+def run_sync(environment, profile):
     profile_name = "lamp-" + environment["id"]
     destination = STATE / "syncdb" / (profile_name + ".json")
     write_json(destination, profile)
@@ -888,7 +966,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         "build": arguments.build, "subdomain": arguments.subdomain, "aliases": desired["aliases"], "directory": desired["directory"],
         "hostnames": environment_hostnames(identity, desired, settings), "vpn": arguments.vpn, "visibility": desired["visibility"],
         "webroot": arguments.webroot, "proxy_port": arguments.proxy_port, "proxy_exclude": arguments.proxy_exclude,
-        "hostname": hostname, "url": url, "path": str(project),
+        "hostname": hostname, "url": url, "path": str(project), "db_name": desired["db_name"], "db_engine": desired["db_engine"],
         "project_owned": project_owned, "project_identity": [project.stat().st_dev, project.stat().st_ino],
         "engine": (current.get("engine") or "mysql") if current else "mysql", "database": "lamp_" + identity,
         "password": current["password"] if current else secrets.token_hex(24), "status": "creating",
@@ -899,7 +977,12 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
     }
     environment.pop("syncdb", None)
     environment.pop("synced_profile", None)
-    if environment["engine"] == "sqlite":
+    if subdomain_labels(desired):
+        environment["engine"] = desired["db_engine"]
+        environment["database"] = sqlite_path(environment) if desired["db_engine"] == "sqlite" else desired["db_name"]
+        environment["mysql_database"] = desired["db_name"] if desired["db_engine"] == "mysql" else None
+        environment["postgres_database"] = desired["db_name"] if desired["db_engine"] == "postgres" else None
+    elif environment["engine"] == "sqlite":
         environment["database"] = str(directory / "data" / "database.sqlite")
     save_environment(environment)
     try:
@@ -944,7 +1027,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         environment["checkout"] = {key: desired[key] for key in ("git", "branch")}
         environment["php"] = resolve_php(project, desired["php"])
         save_environment(environment)
-        if not environment.get("mysql_owned") and not environment.get("postgres_owned"):
+        if subdomain_labels(desired) or (not environment.get("mysql_owned") and not environment.get("postgres_owned")):
             database(environment)
         elif not environment.get("databases_ready", current is not None and current["status"] == "ready"):
             raise ValueError("Incomplete database initialization; remove this environment before recreating it.")
@@ -1031,6 +1114,8 @@ def remove(identity):
         shutil.rmtree(project)
     (SITES / name).unlink(missing_ok=True)
     shutil.rmtree(STATE / "environments" / identity)
+    run(["supervisorctl", "reread"])
+    run(["supervisorctl", "update"])
     return {"id": identity, "status": "removed"}
 
 
@@ -1061,6 +1146,8 @@ def main():
     create.add_argument("--build")
     create.add_argument("--subdomain")
     create.add_argument("--directory")
+    create.add_argument("--db-name", dest="db_name")
+    create.add_argument("--db-engine", dest="db_engine", choices=DATABASE_ENGINES)
     create.add_argument("--alias", dest="aliases", action="append")
     create.add_argument("--webroot")
     create.add_argument("--proxy-port", type=int)
@@ -1080,7 +1167,7 @@ def main():
     if arguments.command == "syncdb":
         # The parent build already holds control.lock while this child performs the import.
         environment = load_environment(os.environ.get("LAMP_ID"))
-        if not environment.get("databases_ready") or not environment.get("mysql_owned"):
+        if not environment.get("databases_ready"):
             raise ValueError("syncdb requires an initialized LAMP environment.")
         print("Synchronizing into the isolated database.", file=sys.stderr)
         sync_database(environment, arguments.profile)

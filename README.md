@@ -124,12 +124,15 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
     --build "<cmd>" \
     --subdomain <label> \
     --directory <name> \
+    --db-name <name> \
+    --db-engine mysql|postgres|sqlite \
     --alias <suffix> \
     --webroot <dir> \
     --proxy-port <port> \
     --proxy-exclude </path> \
     --visibility private|public
 ```
+
 </details>
 
 <details>
@@ -267,8 +270,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>environments</summary>
 
-- `.data/environments.yaml` is a list of the static environments, without ids; `start` / `restart` reconcile it, `add --subdomain` appends to it, `remove` deletes from it
-- an entry and a running environment are the same when every value matches; changing any value in the file removes the old environment (owned databases included, static directories stay) and provisions a new one
+- `.data/config/env.yaml` is a list of the static environments, without ids; `start` / `restart` reconcile it, `add --subdomain` appends to it, `remove` deletes from it
+- an entry and a running environment are the same when every value matches; changing any value in the file removes the old environment and provisions a new one; static directories and fixed databases stay
 - dynamic environments (`add` without `--subdomain`) live in the runtime state only, are never written to the file and are never touched by `start` / `restart`; remove them with `lamp remove <id>`
 - ids are runtime identifiers reported by `add`, `show` and `list`; `add --id` reuses one and is idempotent: identical settings return the existing environment, different settings fail
 - a file from the previous id-keyed format is converted on first use; its dynamic entries are dropped from the file, the environments themselves stay
@@ -360,9 +363,9 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>syncdb</summary>
 
 - original profiles in `.data/syncdb/<profile>.json` (mode 600), visible in the container at `/etc/lamp/syncdb/`
-- `syncdb <profile>` inside a build copies the profile, replaces its complete `target` with the environment's isolated mysql database or sqlite file, imports with php 8.5 in a temporary directory, deletes the copy; `source` and `replace` rules stay unchanged
+- `syncdb <profile>` inside a build or `exec <id>` copies the profile, replaces its complete `target` with the environment's database (static: the fixed `db_name` as root, or the sqlite file; dynamic: the isolated `lamp_<id>` or sqlite file), imports with php 8.5 in a temporary directory, deletes the copy; `source` and `replace` rules stay unchanged; the profile engine must match `db_engine`
 - mysql and sqlite only, no postgresql; imports use the scoped environment account, syncdb rewrites object definers to it
-- a successful import exports `DB_CONNECTION` and `DB_DATABASE` into the running build and `setup.env`; do not call it in a subshell
+- a successful import exports `DB_CONNECTION` and `DB_DATABASE` into the running build and `setup.env`; do not call it in a subshell; postgres has no import, use `psql` with the `PG*` variables
 - every executed `syncdb` imports again; an unchanged start does not run the build at all
 - syncdb `>= 2.1.3` resets object definers to the importing account and remaps `ALTER DATABASE` charset statements in routine dumps to the target database
 

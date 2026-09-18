@@ -112,6 +112,11 @@ unix_socket_directories = '/run/postgresql'
 POSTGRES
     rm /var/lib/lamp/postgresql-initializing
 fi
+# Published port: connections arrive from the docker bridge, not from localhost.
+for network in 0.0.0.0/0 ::/0; do
+    grep -qF "host    all             all             $network" "$postgres_data/pg_hba.conf" \
+        || printf 'host    all             all             %s            scram-sha-256\n' "$network" >> "$postgres_data/pg_hba.conf"
+done
 if [[ "$(< "$postgres_data/PG_VERSION")" != 18 ]]; then
     printf '%s\n' 'This image requires PostgreSQL 18 data; migrate other major versions explicitly.' >&2
     exit 1
