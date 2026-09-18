@@ -36,8 +36,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init`
 - `sudo ln -s "$(pwd -P)/lamp" /usr/local/bin/lamp`
-- `./lamp docker-setup` (or `./lamp docker-setup git@github.com:<owner>/lamp-data.git` with a [data repository](#data-repository))
-- config `.config/setup.yaml`, `.data/settings.yaml` and `docker/docker-compose.override.yml`
+- `./lamp docker-setup` (asks for the domain and an optional [data repository](#data-repository))
+- config `.data/settings.yaml` (not with a data repository) and `docker/docker-compose.override.yml`
 
 </details>
 
@@ -52,7 +52,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
     - `Zone › Zone › Read`
     - `Zone › DNS › Edit`
     - `Zone › Cache Rules › Edit`
-- set `cloudflare.token` and `cloudflare.email` in `.data/settings.yaml`
+- set `cloudflare.token` and `cloudflare.email` in `.data/settings.yaml` (with a data repository they come from there)
 - `./lamp cloudflare-setup`
 
 </details>
@@ -106,7 +106,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `./lamp ssh [<id\|subdomain>]`                                                     | interactive root shell in the container; with an environment: in its project directory with its variables, `git status` first                                            |
 | `./lamp cloudflare-setup`                                                          | create or verify tunnel, wildcard dns, access application, service token and cache rule; prints `ok`, `created`, `updated`, `rotated` or `recreated` per item            |
 | `./lamp docker-build`                                                              | rebuild the image without layer cache, keep volumes (requires stopped container)                                                                                         |
-| `./lamp docker-setup [<data repository>]`                                          | create `.config` and `.data` with commented presets, example files and the compose override; keeps existing files; with a data repository no `.data` is created          |
+| `./lamp docker-setup`                                                              | ask for the domain and an optional data repository, create `.config`, the compose override and, without a data repository, `.data` with commented presets and example files; keeps existing files |
 | `./lamp docker-reset`                                                              | **delete all compose volumes**, then rebuild the image (requires stopped container)                                                                                      |
 
 ```bash
@@ -245,7 +245,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>configuration</summary>
 
-- `./lamp docker-setup` writes `.config/setup.yaml` (mode 600) with `domain` and `.data/settings.yaml` (mode 600) with every optional section as a commented example
+- `./lamp docker-setup` writes `.config/setup.yaml` (mode 600) with the answers for `domain` and `data`, and `.data/settings.yaml` (mode 600) with every optional section as a commented example
 
 | key in `setup.yaml` | default  | effect                                                                                       |
 | ------------------- | -------- | -------------------------------------------------------------------------------------------- |
@@ -277,8 +277,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - `data: git@github.com:<owner>/lamp-data.git` in `.config/setup.yaml` replaces the `.data` folder by that private repository: `settings.yaml`, `ssh/`, `vpn/`, `build/`, `syncdb/` are the same on every host, only `.config` differs
 - lamp keeps its own clone inside the container at `/var/lib/lamp/data` (state volume), `/etc/lamp` links to it; nothing appears on the host; `docker-reset` deletes it with the rest of the state, the next `start` asks for the key again
 - maintain the data in a normal clone anywhere (e.g. `/var/www/lamp-data`), commit and push; lamp never commits or pushes
-- `./lamp docker-setup <url>` writes the entry and creates no `.data`; switching an existing installation needs `./lamp stop` and `./lamp start`
-- first `start`, `restart` or `cloudflare-setup`: lamp asks once on the terminal for a private ssh key that may read the repository (not echoed, not logged, handed to the container through a pipe and deleted after the clone)
+- `./lamp docker-setup` asks for the repository, writes the entry, creates no `.data` and clones right away: it asks once on the terminal for a private ssh key that may read the repository (not echoed, not logged, handed to the container through a pipe and deleted after the clone)
+- when the clone is missing later (after `docker-reset`, or when `data` was added to an existing installation by hand, which needs `./lamp stop` and `./lamp start`), the next `start`, `restart` or `cloudflare-setup` asks for the key again
 - `start`, `restart`, `cloudflare-setup`, `build`, `syncdb` and `add` mirror the repository first (`git fetch` and `git reset --hard` with `ssh/id_rsa` of the clone), so a pushed build script is used by the next `./lamp build <id>` without a restart; when the fetch fails, a warning is printed and the last state is used
 - after every clone and fetch the folder is set to owner-only modes, because git stores no private modes and ssh refuses readable keys
 - the repository contains private keys, vpn profiles, api tokens and production database credentials; keep it private
