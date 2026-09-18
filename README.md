@@ -22,28 +22,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <details>
 
-<summary>1. pull image</summary>
-
-- `mkdir lamp`
-- `cd lamp`
-- `docker pull ghcr.io/vielhuber/lamp:latest`
-
-</details>
-
-<details>
-
-<summary>2. configure instance</summary>
-
-- `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init`
-- `sudo ln -s "$(pwd -P)/lamp" /usr/local/bin/lamp`
-- `./lamp docker-setup` (asks for the domain and an optional [data repository](#data-repository))
-- config `.data/settings.yaml` (not with a data repository) and `docker/docker-compose.override.yml`
-
-</details>
-
-<details>
-
-<summary>3. cloudflare</summary>
+<summary>1. cloudflare token</summary>
 
 - [my profile › api tokens](https://dash.cloudflare.com/profile/api-tokens) › create custom token:
     - `Account › Cloudflare Tunnel › Edit`
@@ -52,8 +31,20 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
     - `Zone › Zone › Read`
     - `Zone › DNS › Edit`
     - `Zone › Cache Rules › Edit`
-- set `cloudflare.token` and `cloudflare.email` in `.data/settings.yaml` (with a data repository they come from there)
-- `./lamp cloudflare-setup`
+
+</details>
+
+<details>
+
+<summary>2. install</summary>
+
+- `mkdir lamp && cd lamp`
+- `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init`
+- `sudo ln -s "$(pwd -P)/lamp" /usr/local/bin/lamp`
+- `./lamp start`
+    - the first start asks for the domain, an optional private [data repository](#data-repository) and its ssh key, then creates tunnel, dns record, access application, service token, cache rule and certificate on its own
+    - without a data repository it stops after writing the presets: set `cloudflare.token` and `cloudflare.email` in `.data/settings.yaml` and run `./lamp start` again
+- optional: adjust `docker/docker-compose.override.yml` (projects mount, default `/var/www`) and `.config/env.yaml`, then `./lamp restart`
 
 </details>
 
@@ -65,7 +56,6 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary><strong>start</strong></summary>
 
-- `./lamp start`
 - `./lamp add --git git@github.com:<owner>/<project>.git --subdomain project`
 - open `https://project.<domain>`
 
@@ -106,7 +96,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `./lamp ssh [<id\|subdomain>]`                                                     | interactive root shell in the container; with an environment: in its project directory with its variables, `git status` first                                            |
 | `./lamp cloudflare-setup`                                                          | create or verify tunnel, wildcard dns, access application, service token and cache rule; prints `ok`, `created`, `updated`, `rotated` or `recreated` per item            |
 | `./lamp docker-build`                                                              | rebuild the image without layer cache, keep volumes (requires stopped container)                                                                                         |
-| `./lamp docker-setup`                                                              | ask for the domain and an optional data repository, create `.config`, the compose override and, without a data repository, `.data` with commented presets and example files; keeps existing files |
+| `./lamp docker-setup`                                                              | run by the first `start` of a new installation: ask for the domain and an optional data repository, create `.config`, the compose override and, without a data repository, `.data` with commented presets and example files; keeps existing files |
 | `./lamp docker-reset`                                                              | **delete all compose volumes**, then rebuild the image (requires stopped container)                                                                                      |
 
 ```bash
@@ -155,7 +145,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>2. configure instance</summary>
 
-- same as [installation](#installation) steps 2 to 4, minus the `init` step
+- same as [installation](#installation), minus the `init` step and before the first `./lamp start`
 
 </details>
 

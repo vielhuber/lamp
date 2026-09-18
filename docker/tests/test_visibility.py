@@ -299,7 +299,7 @@ class VisibilityTest(unittest.TestCase):
 
     def test_private_probe_requires_cloudflare_login_not_an_origin_denial(self):
         with patch.object(control.http.client, 'HTTPSConnection') as connection, \
-             patch.object(control.time, 'monotonic', side_effect=[0, 31]):
+             patch.object(control.time, 'monotonic', side_effect=[0, 121]):
             response = connection.return_value.getresponse.return_value
             response.status = 403
             response.getheader.return_value = ''

@@ -627,7 +627,8 @@ def cloudflare_list(resource=""):
 
 
 def wait_access(hostname, public):
-    deadline = time.monotonic() + 30
+    # a tunnel or dns record created moments ago answers with 530 for up to a minute
+    deadline = time.monotonic() + 120
     while True:
         connection = http.client.HTTPSConnection(hostname, timeout=5)
         try:
