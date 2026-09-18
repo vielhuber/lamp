@@ -29,6 +29,7 @@ case "$command" in
     docker-setup|docker-build|docker-reset|cloudflare-setup|start|restart|stop|status|version|ssh) test "$#" -eq 0 ;;
     build) test "$#" -eq 1 ;;
     list) test "$#" -eq 0 || [[ "$#" = 2 && "$1" = --search ]] ;;
+    syncdb) test "$#" -eq 1 ;;
     remove|show|access) test "$#" -eq 1 ;;
     exec) test "$#" -ge 1 && test "$#" -le 2 ;;
     curl|branch) ;;
@@ -77,6 +78,14 @@ cloudflare:
     email: you@example.com
 
 # optional: vpn tunnels; profiles live in .data/vpn/, names are lowercase, at most twelve characters, letter first
+# xdebug module for every php version; false keeps requests about 15 percent faster, true loads it in trigger mode for the browser extension and XDEBUG_TRIGGER
+php:
+    xdebug: false
+
+# optional: password of mysql root and postgres, applied on every start; default: generated once per installation
+# database:
+#     password: '<PASSWORD>'
+
 # vpn:
 #     enabled: true
 #     tunnels:
@@ -305,7 +314,7 @@ if [[ "$command" = start || "$command" = add ]] && ! git config --global --get-a
     git config --global --add safe.directory '*'
 fi
 case "$command" in
-    build|docker-build|docker-reset|start|restart|stop|add|remove)
+    build|syncdb|docker-build|docker-reset|start|restart|stop|add|remove)
         lock_identity=$(printf '%s' "$directory" | sha256sum)
         exec 9>> "/tmp/lamp-${lock_identity%% *}.lock"
         flock 9
@@ -361,5 +370,6 @@ case "$command" in
     curl)
         "${compose[@]}" exec -T app python3 /opt/lamp/curl.py "$@"
         ;;
-    *) "${compose[@]}" exec -T app python3 /opt/lamp/control.py "$command" "$@" ;;
+    syncdb) "${compose[@]}" exec "${tty[@]}" app python3 /opt/lamp/control.py sync "$@" ;;
+    *) "${compose[@]}" exec "${tty[@]}" app python3 /opt/lamp/control.py "$command" "$@" ;;
 esac

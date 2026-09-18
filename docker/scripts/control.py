@@ -76,8 +76,16 @@ def resolve_identity(value):
     return matches[0]
 
 
-            or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", *sections))):
-        raise ValueError("settings.yaml must contain domain and optionally git, apache, postfix, cloudflare and vpn mappings; see README.md.")
+def configuration():
+    value = yaml.safe_load((CONFIGURATION / "config" / "settings.yaml").read_text())
+    sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname", "relayhost", "username", "password"),
+                "cloudflare": ("token", "email"), "database": ("password",)}
+    if (not isinstance(value, dict) or "domain" not in value or set(value) - {"domain", "vpn", "php", *sections}
+            or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", "php", *sections))):
+        raise ValueError("settings.yaml must contain domain and optionally git, apache, postfix, cloudflare, database, php and vpn mappings; see README.md.")
+    php = value.get("php") or {}
+    if set(php) - {"xdebug"} or any(not isinstance(entry, bool) for entry in php.values()):
+        raise ValueError("php may contain only xdebug: true or false.")
     dns_name = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
     domain = value["domain"]
     if not isinstance(domain, str) or len(domain) > 240 or not re.fullmatch(dns_name, domain):
@@ -90,7 +98,7 @@ def resolve_identity(value):
                 or (section == "cloudflare" and entries and (set(entries) != set(keys) or "@" not in entries["email"]))
                 or ("hostname" in entries and not re.fullmatch(dns_name, entries["hostname"]))
                 or ("relayhost" in entries and not re.fullmatch(r"\[?[A-Za-z0-9.-]+\]?(?::[0-9]{1,5})?", entries["relayhost"]))
-                or (("username" in entries) != ("password" in entries)) or ("username" in entries and "relayhost" not in entries)):
+                or (section == "postfix" and (("username" in entries) != ("password" in entries) or ("username" in entries and "relayhost" not in entries)))):
             raise ValueError(f"{section} may contain only {', '.join(keys)} as nonempty single-line values; hostname must be a lowercase DNS name, relayhost a host or [host]:port, username and password need each other and a relayhost, cloudflare needs token and email.")
     return value
 
@@ -158,6 +166,56 @@ def root_password():
 
 def migrate_specification(value):
     if not isinstance(value, dict) or "syncdb" not in value:
+def ensure_certificate(settings):
+    """Obtain or renew the Let's Encrypt wildcard certificate for the domain through the cloudflare dns challenge."""
+    token = (settings.get("cloudflare") or {}).get("token")
+    if not token:
+        raise ValueError("Set cloudflare.token and cloudflare.email in settings.yaml; the wildcard certificate needs the dns challenge.")
+    credentials = STATE / "secrets" / "cloudflare.ini"
+    credentials.write_text("dns_cloudflare_api_token = " + token + "\n")
+    credentials.chmod(0o600)
+    domain = settings["domain"]
+    if (LETSENCRYPT / "live" / domain / "fullchain.pem").exists():
+        run(["certbot", "renew", "--non-interactive", "--quiet"], output=sys.stderr)
+        return
+    print(f"Requesting the Let's Encrypt certificate for {domain} and *.{domain}.", file=sys.stderr)
+    run(["certbot", "certonly", "--non-interactive", "--agree-tos", "--email", settings["cloudflare"]["email"], "--dns-cloudflare",
+         "--dns-cloudflare-credentials", str(credentials), "--dns-cloudflare-propagation-seconds", "30",
+         "--cert-name", domain, "-d", domain, "-d", "*." + domain], output=sys.stderr)
+
+
+def sync_hosts():
+    """Point every environment hostname at the container itself, so builds and tests reach the local origin directly."""
+    names = sorted({host for environment in environments() for host in hostnames(environment)})
+    lines = [line for line in HOSTS.read_text().splitlines() if not line.endswith("# lamp")]
+    lines += [f"127.0.0.1 {host} # lamp" for host in names]
+    HOSTS.write_text("\n".join(lines) + "\n")
+
+
+def apply_database_password(settings):
+    """Set the mysql root and postgres passwords to database.password from settings.yaml, keeping every consumer in step."""
+    password = (settings.get("database") or {}).get("password")
+    if password is None or password == root_password():
+        return False
+    escaped = password.replace("\\", "\\\\").replace("'", "\\'")
+    run(["mysql"], input=f"ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '{escaped}'; "
+                         f"ALTER USER 'root'@'%' IDENTIFIED WITH mysql_native_password BY '{escaped}';\n")
+    run(["psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"], input="ALTER ROLE postgres PASSWORD '" + password.replace("'", "''") + "';\n")
+    secret = STATE / "secrets" / "database-password"
+    secret.write_text(password + "\n")
+    secret.chmod(0o600)
+    Path("/root/.my.cnf").write_text("[client]\nuser=root\npassword=" + json.dumps(password, ensure_ascii=False) + "\n")
+    Path("/root/.my.cnf").chmod(0o600)
+    Path("/root/.pgpass").write_text("*:5432:*:postgres:" + password.replace("\\", "\\\\").replace(":", "\\:") + "\n")
+    Path("/root/.pgpass").chmod(0o600)
+    for environment in environments():
+        if environment["status"] == "ready" and environment.get("db_name"):
+            write_setup(environment)
+            vhost(environment)
+    reload_apache()
+    return True
+
+
         return value
     value = dict(value)
     profile = value.pop("syncdb")
@@ -448,6 +506,7 @@ def reconcile(settings, desired, *, validate_only=False):
         return
     sync_visibility(settings, desired, publish=False)
     for identity, value in desired.items():
+    apply_database_password(settings)
         if identity in current and (current[identity].get("project_owned") or current[identity].get("setup_environment")):
             ensure_vpn(value["vpn"])
     retired = False
@@ -812,6 +871,20 @@ def run_sync(environment, profile):
     destination = STATE / "syncdb" / (profile_name + ".json")
     write_json(destination, profile)
     try:
+def run_profile(profile_name):
+    """Run a .data/syncdb profile exactly as written; its target credentials must fit the container databases."""
+    source = CONFIGURATION / "syncdb" / (profile_name + ".json")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", profile_name) or not source.is_file():
+        raise ValueError(f"No syncdb profile {profile_name} in .data/syncdb.")
+    destination = STATE / "syncdb" / (profile_name + ".json")
+    shutil.copyfile(source, destination)
+    try:
+        with tempfile.TemporaryDirectory(prefix="lamp-sync-") as working_directory:
+            run(["php8.5", "/root/.syncdb/vendor/vielhuber/syncdb/src/syncdb.php", profile_name], cwd=working_directory, output=sys.stderr)
+    finally:
+        destination.unlink(missing_ok=True)
+
+
         # syncdb cleans its working directory; never run it in a project or profile directory.
         with tempfile.TemporaryDirectory(prefix="lamp-sync-") as working_directory:
             # stdout is reserved for the exports the build's syncdb function evaluates; progress and errors go to the build log.
@@ -1179,11 +1252,12 @@ def main():
         setup = environment.get("setup_environment")
         os.execvp("bash", ["bash", "-c", "set -e\n" + ("source " + shlex.quote(setup) + "\n" if setup else "") + arguments.script])
     if arguments.command == "syncdb":
+    commands.add_parser("sync").add_argument("profile")
         # The parent build already holds control.lock while this child performs the import.
         environment = load_environment(os.environ.get("LAMP_ID"))
         if not environment.get("databases_ready"):
             raise ValueError("syncdb requires an initialized LAMP environment.")
-        print("Synchronizing into the isolated database.", file=sys.stderr)
+        print("Importing into the environment database.", file=sys.stderr)
         sync_database(environment, arguments.profile)
         save_environment(environment)
         variables = write_setup(environment)
@@ -1389,3 +1463,6 @@ if __name__ == "__main__":
         else:
             print(str(error), file=sys.stderr)
         sys.exit(1)
+        elif arguments.command == "sync":
+            run_profile(arguments.profile)
+            result = {"profile": arguments.profile, "status": "imported"}

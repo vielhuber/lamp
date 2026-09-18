@@ -260,6 +260,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `postfix.relayhost`                    | empty (direct delivery) | postfix `relayhost`, e.g. `[smtp.example.com]:587`                                                               |
 | `postfix.username`, `postfix.password` | unset                   | smtp auth for the relay; written to `/etc/postfix/sasl_passwd` (mode 600) on every start                         |
 | `cloudflare.token`, `cloudflare.email` | unset                   | api token used by `cloudflare-setup`, `add`, `remove`, `start`, `restart`, and the login email allowed by access |
+| `database.password`     | generated once        | password of mysql `root` and postgres `postgres`, applied on `start` / `restart` to the servers, `/var/lib/lamp/secrets/database-password`, the vhost variables and `setup.env` |
+| `php.xdebug`            | true (`docker-setup` preset: false) | false removes the xdebug module from every php version on `start` / `restart`, about 15 percent faster requests, no debugging or profiling |
 | `vpn`                                  | disabled                | see [vpn](#vpn)                                                                                                  |
 
 - all values are applied on every container start, so a pulled image and a locally built image behave the same; edit the file and run `./lamp restart`
@@ -367,6 +369,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - `syncdb <profile>` inside a build or `exec <id>` copies the profile, replaces its complete `target` with the environment's database (static: the fixed `db_name` as root, or the sqlite file; dynamic: the isolated `lamp_<id>` or sqlite file), imports with php 8.5 in a temporary directory, deletes the copy; `source` and `replace` rules stay unchanged; the profile engine must match `db_engine`
 - mysql and sqlite only, no postgresql; imports use the scoped environment account, syncdb rewrites object definers to it
 - a successful import exports `DB_CONNECTION` and `DB_DATABASE` into the running build and `setup.env`; do not call it in a subshell; postgres has no import, use `psql` with the `PG*` variables
+- `./lamp syncdb <profile>` runs the profile exactly as written: target `localhost:3306`, user `root` and `database.password`, database `db_name` of the static environment
 - every executed `syncdb` imports again; an unchanged start does not run the build at all
 - syncdb `>= 2.1.3` resets object definers to the importing account and remaps `ALTER DATABASE` charset statements in routine dumps to the target database
 

@@ -35,11 +35,16 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual('[smtp.example.test]:587', control.configuration()['postfix']['relayhost'])
         (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\ncloudflare:\n  token: t0ken\n  email: jane@example.test\n')
         self.assertEqual({'token': 't0ken', 'email': 'jane@example.test'}, control.configuration()['cloudflare'])
+        (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\ndatabase:\n  password: root\n')
+        self.assertEqual({'password': 'root'}, control.configuration()['database'])
+        (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\nphp:\n  xdebug: false\n')
+        self.assertEqual({'xdebug': False}, control.configuration()['php'])
         for text in ['git: {nickname: x}', 'git: {name: ""}', 'git: {name: "a\\nb"}', 'git: [name]', 'apache: {admin: "a b"}',
                      'postfix: {hostname: "Mail.Example"}', 'postfix: {hostname: "a b.test"}', 'postfix: {relayhost: "smtp host"}',
                      'postfix: {relayhost: "smtp://x"}', 'postfix: {relayhost: "[a.test]:587", username: "u"}',
                      'postfix: {username: "u", password: "p"}', 'cloudflare: {token: t}', 'cloudflare: {token: "a b", email: x@y}',
-                     'cloudflare: {token: t, email: nomail}', 'unknown: 1']:
+                     'cloudflare: {token: t, email: nomail}', 'database: {user: x}', 'database: {password: ""}', 'php: {xdebug: "no"}',
+                     'php: {jit: true}', 'unknown: 1']:
             with self.subTest(text=text), self.assertRaises(ValueError):
                 (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\n' + text + '\n')
                 control.configuration()
@@ -70,3 +75,21 @@ class SettingsTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+    def test_database_password_is_applied_to_both_servers_and_all_consumers(self):
+        (self.root / 'secrets').mkdir()
+        (self.root / 'secrets' / 'database-password').write_text('old\n')
+        (self.root / 'environments').mkdir()
+        with patch.object(control, 'STATE', self.root), patch.object(control, 'reload_apache') as reload, \
+             patch.object(control, 'environments', return_value=[]), patch.object(control.Path, 'write_text') as write, \
+             patch.object(control.Path, 'chmod'):
+            self.assertFalse(control.apply_database_password({'domain': 'example.test'}))
+            self.assertFalse(control.apply_database_password({'domain': 'example.test', 'database': {'password': 'old'}}))
+            self.run.assert_not_called()
+            self.assertTrue(control.apply_database_password({'domain': 'example.test', 'database': {'password': "ro'ot"}}))
+        inputs = [call.kwargs.get('input', '') for call in self.run.call_args_list]
+        self.assertIn("ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'ro\\'ot'; ALTER USER 'root'@'%' IDENTIFIED WITH mysql_native_password BY 'ro\\'ot';\n", inputs)
+        self.assertIn("ALTER ROLE postgres PASSWORD 'ro''ot';\n", inputs)
+        written = {str(call.args[0]) if call.args else None: call.args[-1] for call in write.call_args_list}
+        self.assertEqual({"ro'ot\n", '[client]\nuser=root\npassword="ro\'ot"\n', "*:5432:*:postgres:ro'ot\n"}, set(written.values()))
+        reload.assert_called_once()
+
