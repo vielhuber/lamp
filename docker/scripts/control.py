@@ -865,6 +865,12 @@ def sync_database(environment, profile_name):
         run_sync(environment, profile)
         return
     environment["engine"] = profile["engine"]
+    # Profiles are written for the static environment; every lamp hostname in the replace rules becomes this environment's hostname.
+    hostname = environment["hostname"]
+    lamp_hostname = re.compile(r"\b[a-z0-9-]+\." + re.escape(hostname.split(".", 1)[1]) + r"\b")
+    if isinstance(profile.get("replace"), dict):
+        profile["replace"] = {lamp_hostname.sub(hostname, key): lamp_hostname.sub(hostname, value) if isinstance(value, str) else value
+                              for key, value in profile["replace"].items()}
     name = "lamp_" + environment["id"]
     if environment["engine"] == "mysql":
         profile["target"] = {"host": "localhost", "port": "3306", "database": name,

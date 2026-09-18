@@ -231,6 +231,16 @@ class EnvironmentSetupTest(unittest.TestCase):
         for arguments in (['--subdomain', 'x', '--db-name', 'x'], ['--db-name', 'x', '--db-engine', 'mysql'], ['--subdomain', 'x', '--db-name', 'a b', '--db-engine', 'mysql']):
             with self.subTest(arguments=arguments), self.assertRaises((ValueError, SystemExit)):
                 self.invoke('add', *arguments)
+        dynamic = json.loads(self.invoke('add'))
+        environment = [item for item in control.environments() if item['id'] == dynamic['id']][0]
+        (control.CONFIGURATION / 'syncdb' / 'dynamic.json').write_text(json.dumps({'engine': 'mysql', 'source': {}, 'replace': {
+            'https://www.blog.com': 'https://blog.example.test', '@blog.example.test': '@www.blog.com', 'keep.example.com': 'keep.example.com'}}))
+        with patch.object(control, 'run_sync') as sync:
+            control.sync_database(environment, 'dynamic')
+        hostname = dynamic['id'] + '.example.test'
+        self.assertEqual({'https://www.blog.com': 'https://' + hostname, '@' + hostname: '@www.blog.com', 'keep.example.com': 'keep.example.com'},
+                         sync.call_args.args[1]['replace'])
+        self.assertEqual('lamp_' + dynamic['id'], sync.call_args.args[1]['target']['database'])
         (control.PROJECTS / 'plain').mkdir()
         self.invoke('add', '--subdomain', 'plain')
         plain = [item for item in control.environments() if item['subdomain'] == 'plain'][0]
