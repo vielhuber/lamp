@@ -46,9 +46,9 @@ if [[ "$command" = docker-setup ]]; then
         chmod "$mode" "$path"
         printf 'created %s\n' "${path#"$directory/"}"
     }
-    mkdir -p "$data" "$data/build" "$data/syncdb" "$data/ssh" "$data/cloudflare" "$data/vpn" "$data/cliproxyapi" "$directory/docker"
-    chmod 700 "$data" "$data/build" "$data/syncdb" "$data/ssh" "$data/cloudflare" "$data/vpn" "$data/cliproxyapi"
-    preset "$data/config.yaml" 600 <<'PRESET'
+    mkdir -p "$data" "$data/config" "$data/build" "$data/syncdb" "$data/ssh" "$data/cloudflare" "$data/vpn" "$directory/docker"
+    chmod 700 "$data" "$data/config" "$data/build" "$data/syncdb" "$data/ssh" "$data/cloudflare" "$data/vpn"
+    preset "$data/config/settings.yaml" 600 <<'PRESET'
 # base domain of every environment: https://<subdomain-or-id>.<domain>
 domain: example.com
 
@@ -283,10 +283,10 @@ if [[ "$command" = status || "$command" = version ]]; then
     if [[ "$service_result" != 0 && "$service_result" != 3 ]]; then exit "$service_result"; fi
     exit 0
 fi
-mkdir -p "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/cliproxyapi" "$LAMP_DATA_DIR/build"
-chmod 700 "$LAMP_DATA_DIR" "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/cliproxyapi" "$LAMP_DATA_DIR/build"
-if [[ ! -f "$LAMP_DATA_DIR/config.yaml" || ! -f "$directory/docker/docker-compose.override.yml" ]]; then
-    printf '%s\n' 'Missing .data/config.yaml or docker/docker-compose.override.yml. Run ./lamp docker-setup first.' >&2
+mkdir -p "$LAMP_DATA_DIR/config" "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/build"
+chmod 700 "$LAMP_DATA_DIR" "$LAMP_DATA_DIR/config" "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/build"
+if [[ ! -f "$LAMP_DATA_DIR/config/settings.yaml" || ! -f "$directory/docker/docker-compose.override.yml" ]]; then
+    printf '%s\n' 'Missing .data/config/settings.yaml or docker/docker-compose.override.yml. Run ./lamp docker-setup first.' >&2
     exit 1
 fi
 # environments belong to www-data while harnesses run as root on the host

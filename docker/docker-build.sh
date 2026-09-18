@@ -609,15 +609,6 @@ ln -s /var/www/skills/AGENTS.md /root/.config/opencode/AGENTS.md
 ln -s /var/www/skills /root/.config/opencode/skills
 ln -s /var/www/skills/AGENTS.md /root/.antigravity/AGENTS.md
 
-#### cliproxyapi
-step 'cliproxyapi'
-curl -fsSL https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.159/CLIProxyAPI_7.2.159_linux_amd64.tar.gz -o cliproxyapi.tar.gz
-mkdir cliproxyapi
-tar -xzf cliproxyapi.tar.gz -C cliproxyapi
-install -m 755 cliproxyapi/cli-proxy-api /usr/local/bin/cli-proxy-api
-install -m 644 cliproxyapi/config.example.yaml /opt/lamp/cliproxyapi.example.yaml
-sed -i 's/^request-log: .*/request-log: true/; s/^logs-max-total-size-mb: .*/logs-max-total-size-mb: 500/; s|^auth-dir: .*|auth-dir: "/var/lib/lamp/cliproxyapi/auth"|' /opt/lamp/cliproxyapi.example.yaml
-
 #### httrack
 step 'httrack'
 apt-get install -y httrack webhttrack
@@ -720,7 +711,7 @@ supervisor.rpcinterface_factory=supervisor.rpcinterface:make_main_rpcinterface
 serverurl=unix:///run/supervisor.sock
 
 [include]
-files=/run/lamp-supervisor/*.conf
+files=/run/lamp-supervisor/*.conf /var/lib/lamp/environments/*/data/supervisor.conf
 SUPERVISOR
 
 #### image checks

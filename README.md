@@ -331,13 +331,15 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `LAMP_URL`, `APP_URL`                       | `https://<hostname>`                                          |
 | `LAMP_PROJECT_DIR`                          | checkout path                                                 |
 | `LAMP_DATA_DIR`                             | persistent per-environment data directory                     |
-| `DB_CONNECTION`                             | `mysql`; a successful sqlite `syncdb` switches it to `sqlite` |
-| `DB_HOST`, `DB_PORT`                        | `localhost`, `3306`                                           |
-| `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | `lamp_<id>` / generated password, or the sqlite file path     |
-| `PGHOST`, `PGPORT`                          | `localhost`, `5432`                                           |
-| `PGDATABASE`, `PGUSER`, `PGPASSWORD`        | `lamp_<id>` / generated password                              |
+| `DB_CONNECTION`                             | static: `mysql`, `pgsql` or `sqlite` from `db_engine`, unset without database; dynamic: `mysql`, a sqlite `syncdb` switches it |
+| `DB_HOST`, `DB_PORT`                        | `localhost`, `3306` (mysql) or `5432` (postgres)               |
+| `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | static: `db_name` with `root` / `postgres` and the container database password, or the sqlite file path; dynamic: `lamp_<id>` with a generated password |
+| `PGHOST`, `PGPORT`                          | `localhost`, `5432`; static only with `db_engine: postgres`   |
+| `PGDATABASE`, `PGUSER`, `PGPASSWORD`        | static: `db_name` / `postgres`; dynamic: `lamp_<id>` / generated password |
 
-- the variables are not injected into php-fpm; the build must write them into the project's own configuration (`.env`, `wp-config.php`, …)
+- the same variables are set in the environment's vhost (`SetEnv`) and reach php-fpm as fastcgi parameters: `getenv('DB_DATABASE')` or `$_SERVER['DB_DATABASE']` in php, laravel's `env()` prefers them over `.env`; cli runs get them through `exec <id>` and `build`
+- wordpress: `define('DB_NAME', getenv('DB_DATABASE'))`, `define('DB_USER', getenv('DB_USERNAME'))`, `define('DB_PASSWORD', getenv('DB_PASSWORD'))`, `define('DB_HOST', getenv('DB_HOST'))` in the local branch of `wp-config.php`, no generated files needed
+- services: a build may write supervisor `[program:…]` sections to `$LAMP_DATA_DIR/supervisor.conf` (unique program names, absolute paths); lamp loads the file after every build and on container start, restarts changed programs and stops them when the environment is removed; combine with `proxy_port` to route the vhost to the service
 - later shells: `./lamp ssh`, `source /var/lib/lamp/environments/<id>/setup.env`, `cd "$LAMP_PROJECT_DIR"`
 - node: lts and current are installed; `source /root/.nvm/nvm.sh && nvm use` for a project `.nvmrc` (the version must be installed by the build)
 - python 3 with pip/venv (`python` is python 3); `python3.12` additionally at `/opt/python3.12`; no python 2, no node 10–16

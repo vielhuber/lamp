@@ -945,6 +945,9 @@ def add(arguments, settings, identity, current=None):
                     raise RuntimeError(f"{error} Build log: {log}") from None
                 finally:
                     environment = load_environment(identity)
+            # Services declared by the build in $LAMP_DATA_DIR/supervisor.conf start, restart or stop here.
+            run(["supervisorctl", "reread"])
+            run(["supervisorctl", "update"])
         os.umask(0o077)
         environment["document_root"] = str(project)
         for subdirectory in ("public", "web"):

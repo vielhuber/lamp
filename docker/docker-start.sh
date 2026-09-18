@@ -190,28 +190,6 @@ if [[ -s /root/.config/ngrok/ngrok.yml ]]; then
     supervisor_program ngrok root 60 "$(command -v ngrok) start --all --config /root/.config/ngrok/ngrok.yml"
 fi
 
-#### cliproxyapi
-if [[ -s /var/lib/lamp/cliproxyapi/config.yaml ]]; then
-    mkdir -p /var/lib/lamp/cliproxyapi/auth/logs /root/cliproxyapi
-    chmod 700 /var/lib/lamp/cliproxyapi /var/lib/lamp/cliproxyapi/auth
-    chmod 600 /var/lib/lamp/cliproxyapi/config.yaml
-    for alias in /root/.cli-proxy-api /root/cliproxyapi/config.yaml /var/lib/lamp/cliproxyapi/logs; do
-        target=/var/lib/lamp/cliproxyapi/auth
-        if [[ "$alias" = /root/cliproxyapi/config.yaml ]]; then target=/var/lib/lamp/cliproxyapi/config.yaml; fi
-        if [[ "$alias" = /var/lib/lamp/cliproxyapi/logs ]]; then target=/var/lib/lamp/cliproxyapi/auth/logs; fi
-        if [[ -e "$alias" || -L "$alias" ]]; then
-            if [[ ! -L "$alias" || "$(readlink "$alias")" != "$target" ]]; then
-                printf '%s\n' 'CLIProxyAPI compatibility path already contains unmanaged data; migrate it before starting.' >&2
-                exit 1
-            fi
-        else
-            ln -s "$target" "$alias"
-        fi
-    done
-    supervisor_program cliproxyapi root 40 '/usr/local/bin/cli-proxy-api -config /var/lib/lamp/cliproxyapi/config.yaml'
-    printf 'directory=/var/lib/lamp/cliproxyapi/auth\n' >> /run/lamp-supervisor/cliproxyapi.conf
-fi
-
 #### start
 python3 /opt/lamp/vpn.py prepare
 python3 /opt/lamp/control.py prepare
