@@ -14,7 +14,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - [docker](https://docs.docker.com/engine/install/ubuntu/) `>= 20.10.0` with the compose plugin
 - `bash`, `git`, `python3`, `flock`, `sha256sum`, `readlink` on the host
 - `/dev/net/tun` on the host (vpn support)
-- a cloudflare account with the dns zone of `<domain>` and [cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/) on the host; tunnel and access are set up during installation
+- a cloudflare account with the dns zone of `<domain>`; tunnel, access and cache are set up by `./lamp cloudflare-setup`
 
 </details>
 
@@ -48,26 +48,17 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <details>
 
-<summary>3. cloudflare tunnel</summary>
+<summary>3. cloudflare</summary>
 
-- reuse an existing locally managed tunnel or create one with `cloudflared tunnel create lamp`; only its credentials json is needed, no `cert.pem` and no api token for the tunnel itself
-- once: proxied wildcard cname `*.<domain>` → `<TUNNEL_UUID>.cfargotunnel.com`, or `cloudflared tunnel route dns <TUNNEL> '*.<domain>'`
-- `install -m 600 ~/.cloudflared/<TUNNEL_UUID>.json .data/cloudflare/cloudflared-credentials.json`
-- `sudo systemctl disable --now cloudflared` on the host; never run the same tunnel from two machines
-
-</details>
-
-<details>
-
-<summary>4. cloudflare access</summary>
-
-- zero trust › `Access controls › Applications › Add an application › Self-hosted`: name `lamp`, public hostname `*.<domain>`, all paths
-- policy 1, developer login: `Allow`, `Include › Emails` with your cloudflare login email, `Require › Login Methods › Cloudflare`; the cloudflare identity provider under `Integrations › Identity providers` must have `Restrict to account members` enabled
-- policy 2, harness: `Access controls › Service credentials › Service Tokens › Create` a token, then `Service Auth`, `Include › Service Token` selecting it; never `Bypass` or `Allow › Everyone` on this application
-- `cp .data/cloudflare/cloudflare-service-token.yaml.example .data/cloudflare/cloudflare-service-token.yaml` and fill in `CF-Access-Client-Id` and `CF-Access-Client-Secret` of that token (mode 600)
-- management token: [my profile › api tokens](https://dash.cloudflare.com/profile/api-tokens) › `Create Custom Token` › `Account › Access: Apps and Policies › Edit`, scoped to the one account, with an expiry
-- `touch .data/cloudflare/cloudflare-api-token && chmod 600 .data/cloudflare/cloudflare-api-token && nano .data/cloudflare/cloudflare-api-token`; paste only the token on one line, no `Bearer`, no quotes, never into a shell command or chat
-- without these two files and the wildcard application `add`, `start` and `restart` refuse to serve environments
+- [my profile › api tokens](https://dash.cloudflare.com/profile/api-tokens) › create custom token:
+    - `Account › Cloudflare Tunnel › Edit`
+    - `Account › Access: Apps and Policies › Edit`
+    - `Account › Access: Service Tokens › Edit`
+    - `Zone › Zone › Read`
+    - `Zone › DNS › Edit`
+    - `Zone › Cache Rules › Edit`
+- set `cloudflare.token` and `cloudflare.email` in `.data/config/settings.yaml`
+- `./lamp cloudflare-setup`
 
 </details>
 
@@ -100,26 +91,27 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary><strong>commands</strong></summary>
 
-| command | effect |
-| --- | --- |
-| `./lamp start` | start container, wait for health, apply `.data/environments.yaml` |
-| `./lamp add [options]` | create environment, returns json; all options below are optional; `--subdomain` records a static entry in `.data/environments.yaml`, without it the environment is dynamic |
-| `./lamp stop` | stop container, keep all data |
-| `./lamp restart` | validate yaml, stop, start, apply |
-| `./lamp status [--json]` | container state, health, ports, supervised services |
-| `./lamp version [--json]` | host checkout version and container image id |
-| `./lamp build <id>` | rerun the configured build of one environment inside the running container |
-| `./lamp list [--search <term>]` | all environments as json; `--search` filters case-insensitively over all values |
-| `./lamp show <id>` | one environment as json |
-| `./lamp branch <id> <branch> [--base <b>] [--operation switch\|rename]` | switch or create branch without rebuild |
-| `./lamp exec [<id>] "<command>"` | with an id: in the project directory with its php, setup variables and authenticated `curl`; without: as root in the container |
-| `./lamp curl <id> -- <curl args>` | curl the environment's exact https origin with the access service token |
-| `./lamp access <id>` | origin and access headers as json; secret, for trusted integrations only |
-| `./lamp remove <id>` | remove environment, owned databases, runtime data; dynamic project directory only |
-| `./lamp ssh` | interactive root shell in the container |
-| `./lamp docker-build` | rebuild the image without layer cache, keep volumes (requires stopped container) |
-| `./lamp docker-setup` | create `.data` with commented presets, example files and the compose override; keeps existing files |
-| `./lamp docker-reset` | **delete all compose volumes**, then rebuild the image (requires stopped container) |
+| command                                                                 | effect                                                                                                                                                                   |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `./lamp start`                                                          | start container, wait for health, apply `.data/config/env.yaml`                                                                                                          |
+| `./lamp add [options]`                                                  | create environment, returns json; all options below are optional; `--subdomain` records a static entry in `.data/config/env.yaml`, without it the environment is dynamic |
+| `./lamp stop`                                                           | stop container, keep all data                                                                                                                                            |
+| `./lamp restart`                                                        | validate yaml, stop, start, apply                                                                                                                                        |
+| `./lamp status [--json]`                                                | container state, health, ports, supervised services                                                                                                                      |
+| `./lamp version [--json]`                                               | host checkout version and container image id                                                                                                                             |
+| `./lamp build <id>`                                                     | rerun the configured build of one environment inside the running container                                                                                               |
+| `./lamp list [--search <term>]`                                         | all environments as json; `--search` filters case-insensitively over all values                                                                                          |
+| `./lamp show <id>`                                                      | one environment as json                                                                                                                                                  |
+| `./lamp branch <id> <branch> [--base <b>] [--operation switch\|rename]` | switch or create branch without rebuild                                                                                                                                  |
+| `./lamp exec [<id>] "<command>"`                                        | with an id: in the project directory with its php, setup variables and authenticated `curl`; without: as root in the container                                           |
+| `./lamp curl <id> -- <curl args>`                                       | curl the environment's exact https origin with the access service token                                                                                                  |
+| `./lamp access <id>`                                                    | origin and access headers as json; secret, for trusted integrations only                                                                                                 |
+| `./lamp remove <id>`                                                    | remove environment, owned databases, runtime data; dynamic project directory only                                                                                        |
+| `./lamp ssh`                                                            | interactive root shell in the container                                                                                                                                  |
+| `./lamp cloudflare-setup`                                               | create or verify tunnel, wildcard dns, access application, service token and cache rule; prints `ok`, `created`, `updated`, `rotated` or `recreated` per item            |
+| `./lamp docker-build`                                                   | rebuild the image without layer cache, keep volumes (requires stopped container)                                                                                         |
+| `./lamp docker-setup`                                                   | create `.data` with commented presets, example files and the compose override; keeps existing files                                                                      |
+| `./lamp docker-reset`                                                   | **delete all compose volumes**, then rebuild the image (requires stopped container)                                                                                      |
 
 ```bash
 ./lamp add \
@@ -253,17 +245,18 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>configuration</summary>
 
-- `./lamp docker-setup` writes `.data/config.yaml` (mode 600) with `domain` set and every optional section as a commented example
+- `./lamp docker-setup` writes `.data/config/settings.yaml` (mode 600) with `domain` set and every optional section as a commented example
 
-| key                     | default               | effect                                                                                       |
-| ----------------------- | --------------------- | -------------------------------------------------------------------------------------------- |
-| `domain`                | required              | base domain of every environment; a change reapplies all environments on `start` / `restart` |
-| `git.name`, `git.email` | unset                 | global git identity inside the container for commits made through `exec` or `ssh`            |
-| `apache.admin`          | `webmaster@localhost` | `ServerAdmin` of the shared apache configuration                                             |
-| `postfix.hostname`      | `lamp.localdomain`    | `myhostname` and `/etc/mailname` of the container's postfix                                  |
-| `postfix.relayhost`     | empty (direct delivery) | postfix `relayhost`, e.g. `[smtp.example.com]:587`                                     |
-| `postfix.username`, `postfix.password` | unset  | smtp auth for the relay; written to `/etc/postfix/sasl_passwd` (mode 600) on every start |
-| `vpn`                   | disabled              | see [vpn](#vpn)                                                                              |
+| key                                    | default                 | effect                                                                                                           |
+| -------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `domain`                               | required                | base domain of every environment; a change reapplies all environments on `start` / `restart`                     |
+| `git.name`, `git.email`                | unset                   | global git identity inside the container for commits made through `exec` or `ssh`                                |
+| `apache.admin`                         | `webmaster@localhost`   | `ServerAdmin` of the shared apache configuration                                                                 |
+| `postfix.hostname`                     | `lamp.localdomain`      | `myhostname` and `/etc/mailname` of the container's postfix                                                      |
+| `postfix.relayhost`                    | empty (direct delivery) | postfix `relayhost`, e.g. `[smtp.example.com]:587`                                                               |
+| `postfix.username`, `postfix.password` | unset                   | smtp auth for the relay; written to `/etc/postfix/sasl_passwd` (mode 600) on every start                         |
+| `cloudflare.token`, `cloudflare.email` | unset                   | api token used by `cloudflare-setup`, `add`, `remove`, `start`, `restart`, and the login email allowed by access |
+| `vpn`                                  | disabled                | see [vpn](#vpn)                                                                                                  |
 
 - all values are applied on every container start, so a pulled image and a locally built image behave the same; edit the file and run `./lamp restart`
 - invalid or unknown keys stop the start before any environment is touched
@@ -385,10 +378,11 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>tunnel</summary>
 
-- setup: [installation › 3. cloudflare tunnel](#installation)
+- `cloudflare-setup` creates the locally managed tunnel `<domain>`, writes `.data/cloudflare/cloudflared-credentials.json` and points the proxied cname `*.<domain>` at it; a tunnel of that name without local credentials is deleted and recreated
 - supervisor runs `cloudflared` inside the container; the wildcard ingress forwards `*.<domain>` to apache's internal listener `127.0.0.1:8081`, everything else gets 404
 - without the credentials file `start` works but `add` and configured environments are refused
-- `domain` changes in `config.yaml` reapply all environments on the next `start` / `restart`
+- `domain` changes in `settings.yaml` reapply all environments on the next `start` / `restart`; run `cloudflare-setup` again for the new zone
+- never run the same tunnel from two machines
 
 </details>
 
@@ -396,7 +390,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>access</summary>
 
-- setup: [installation › 4. cloudflare access](#installation); the wildcard application, its two policies, the service token and the management token are mandatory
+- `cloudflare-setup` creates the self-hosted application `lamp` for `*.<domain>` with policy `developer` (allow `cloudflare.email`) and policy `harness` (service token `lamp`), and writes `.data/cloudflare/cloudflare-service-token.yaml`; a rerun restores these settings if they were changed
 - customers: a separate application per exact hostname with an `allow` policy for their exact emails via one-time pin; revoke sessions when withdrawing access
 - session tip: global session one month, application session 24 hours, developer policy `same as application`
 - `visibility: public` creates `lamp-public:<domain>:<id>` with a `bypass › everyone` policy for exactly the environment's hostnames; private removes it; the wildcard stays untouched
@@ -410,8 +404,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>cache</summary>
 
 - cloudflare caches static assets (`.js`, `.css`, images, fonts) of every proxied hostname by default, also behind access; after a rebuild the tunnel can still deliver the previous bundle
-- switch it off once for the whole zone: dashboard › `<domain>` › `Caching › Cache Rules › Create rule`, name `lamp: bypass cache`, `When incoming requests match › All incoming requests` (or `Hostname › wildcard › *.<domain>` if the zone also serves other sites), `Cache eligibility › Bypass cache`, deploy
-- the same rule via api: ruleset phase `http_request_cache_settings`, action `set_cache_settings` with `"cache": false`; needs a token with `Zone › Cache Rules › Edit`, which the management token does not have
+- `cloudflare-setup` creates the cache rule `lamp: bypass cache` for every host ending in `.<domain>`; other cache rules of the zone are kept
 - verify with `./lamp curl <id> -- -sSI https://<hostname>/_build/app.js` (any static file): `cf-cache-status: DYNAMIC` on every request, never `HIT`
 - `Caching › Configuration › Development Mode` expires after three hours and is no replacement
 
@@ -419,9 +412,9 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <details>
 
-<summary>management api token</summary>
+<summary>api token</summary>
 
-- created during [installation › 4. cloudflare access](#installation); needed for `add`, `remove`, `start`, `restart` (protection check and bypass management), also for private environments
+- `cloudflare.token` in `settings.yaml`; needed for `cloudflare-setup` and for `add`, `remove`, `start`, `restart` (protection check and bypass management), also for private environments
 - rotate it before it expires; the tunnel credentials, the service token and this token are three different credentials
 
 </details>
@@ -430,7 +423,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>service token (harness)</summary>
 
-- created during [installation › 4. cloudflare access](#installation)
+- created by `cloudflare-setup` as `.data/cloudflare/cloudflare-service-token.yaml`; if the file is lost, a rerun rotates the secret
 - `./lamp curl <id> -- -fsS https://<hostname>/` and the `curl` wrapper inside `exec <id>` send the headers only to that environment's exact https origin, never follow redirects with credentials, and refuse unsupported options
 - `./lamp access <id>` prints origin and headers as json for trusted integrations; keep it out of visible tool calls and logs
 - public environments send no token; their own application logins still apply

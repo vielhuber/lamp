@@ -71,11 +71,12 @@ def configuration():
         entries = value.get(section) or {}
         if (set(entries) - set(keys)
                 or any(not isinstance(entry, str) or not entry.strip() or re.search(r"[\r\n\0]", entry) for entry in entries.values())
-                or any(re.search(r"\s", entries[key]) for key in ("admin", "hostname", "relayhost") if key in entries)
+                or any(re.search(r"\s", entries[key]) for key in ("admin", "hostname", "relayhost", "token", "email") if key in entries)
+                or (section == "cloudflare" and entries and (set(entries) != set(keys) or "@" not in entries["email"]))
                 or ("hostname" in entries and not re.fullmatch(dns_name, entries["hostname"]))
                 or ("relayhost" in entries and not re.fullmatch(r"\[?[A-Za-z0-9.-]+\]?(?::[0-9]{1,5})?", entries["relayhost"]))
                 or (("username" in entries) != ("password" in entries)) or ("username" in entries and "relayhost" not in entries)):
-            raise ValueError(f"{section} may contain only {', '.join(keys)} as nonempty single-line values; hostname must be a lowercase DNS name, relayhost a host or [host]:port, username and password need each other and a relayhost.")
+            raise ValueError(f"{section} may contain only {', '.join(keys)} as nonempty single-line values; hostname must be a lowercase DNS name, relayhost a host or [host]:port, username and password need each other and a relayhost, cloudflare needs token and email.")
     return value
 
 
@@ -1132,7 +1133,7 @@ def main():
             if not link.exists():
                 link.symlink_to(default)
             if not connector(settings) and desired:
-                raise ValueError("Configured environments require .data/cloudflare/cloudflared-credentials.json.")
+                raise ValueError("Configured environments require the tunnel credentials; run lamp cloudflare-setup.")
             return
         if arguments.command == "branch":
             environment = load_environment(arguments.id)

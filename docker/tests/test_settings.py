@@ -29,16 +29,19 @@ class SettingsTest(unittest.TestCase):
                                                'apache:\n  admin: admin@example.test\npostfix:\n  hostname: mail.example.test\n')
         settings = control.configuration()
         self.assertEqual({'name': 'Jane Doe', 'email': 'jane@example.test'}, settings['git'])
-        (self.root / 'config.yaml').write_text('domain: example.test\ngit: null\n')
+        (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\ngit: null\n')
         self.assertIsNone(control.configuration()['git'])
-        (self.root / 'config.yaml').write_text('domain: example.test\npostfix:\n  relayhost: "[smtp.example.test]:587"\n')
+        (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\npostfix:\n  relayhost: "[smtp.example.test]:587"\n')
         self.assertEqual('[smtp.example.test]:587', control.configuration()['postfix']['relayhost'])
+        (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\ncloudflare:\n  token: t0ken\n  email: jane@example.test\n')
+        self.assertEqual({'token': 't0ken', 'email': 'jane@example.test'}, control.configuration()['cloudflare'])
         for text in ['git: {nickname: x}', 'git: {name: ""}', 'git: {name: "a\\nb"}', 'git: [name]', 'apache: {admin: "a b"}',
                      'postfix: {hostname: "Mail.Example"}', 'postfix: {hostname: "a b.test"}', 'postfix: {relayhost: "smtp host"}',
                      'postfix: {relayhost: "smtp://x"}', 'postfix: {relayhost: "[a.test]:587", username: "u"}',
-                     'postfix: {username: "u", password: "p"}', 'unknown: 1']:
+                     'postfix: {username: "u", password: "p"}', 'cloudflare: {token: t}', 'cloudflare: {token: "a b", email: x@y}',
+                     'cloudflare: {token: t, email: nomail}', 'unknown: 1']:
             with self.subTest(text=text), self.assertRaises(ValueError):
-                (self.root / 'config.yaml').write_text('domain: example.test\n' + text + '\n')
+                (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\n' + text + '\n')
                 control.configuration()
 
     def test_settings_are_applied_and_fall_back_to_defaults(self):

@@ -308,9 +308,8 @@ class CloudflareRequestTest(unittest.TestCase):
              patch.object(control.http.client, 'HTTPSConnection') as connection:
             folder = Path(directory) / 'cloudflare'
             folder.mkdir()
-            token = folder / 'cloudflare-api-token'
-            token.write_text('test-secret')
-            token.chmod(0o600)
+            (Path(directory) / 'config').mkdir()
+            (Path(directory) / 'config' / 'settings.yaml').write_text('domain: example.test\ncloudflare:\n  token: test-secret\n  email: jane@example.test\n')
             (folder / 'cloudflared-credentials.json').write_text('{"AccountTag":"' + 'a' * 32 + '"}')
             response = connection.return_value.getresponse.return_value
             response.status = 403

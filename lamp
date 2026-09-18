@@ -24,7 +24,7 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
     exit 0
 fi
 case "$command" in
-    docker-setup|docker-build|docker-reset|start|restart|stop|status|version|ssh) test "$#" -eq 0 ;;
+    docker-setup|docker-build|docker-reset|cloudflare-setup|start|restart|stop|status|version|ssh) test "$#" -eq 0 ;;
     build) test "$#" -eq 1 ;;
     list) test "$#" -eq 0 || [[ "$#" = 2 && "$1" = --search ]] ;;
     remove|show|access) test "$#" -eq 1 ;;
@@ -67,6 +67,12 @@ domain: example.com
 #     relayhost: '[smtp.example.com]:587'
 #     username: '<USER>'
 #     password: '<PASSWORD>'
+
+# cloudflare api token (Account: Cloudflare Tunnel Edit, Access: Apps and Policies Edit, Access: Service Tokens Edit; Zone: Zone Read, DNS Edit, Cache Rules Edit)
+# and the login email allowed by cloudflare access; applied by ./lamp cloudflare-setup
+cloudflare:
+    token: '<TOKEN>'
+    email: you@example.com
 
 # optional: vpn tunnels; profiles live in .data/vpn/, names are lowercase, at most twelve characters, letter first
 # vpn:
@@ -200,7 +206,7 @@ services:
             #   bind:
             #       create_host_path: false
 PRESET
-    printf '%s\n' 'next: set domain in .data/config.yaml, install .data/cloudflare/cloudflared-credentials.json and cloudflare-api-token, then ./lamp start'
+    printf '%s\n' 'next: set domain, cloudflare.token and cloudflare.email in .data/config/settings.yaml, then ./lamp cloudflare-setup and ./lamp start'
     exit 0
 fi
 if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = start || "$command" = restart ]]; then
@@ -339,6 +345,7 @@ case "$command" in
         ;;
     stop) "${compose[@]}" stop ;;
     ssh) "${compose[@]}" exec app bash -il ;;
+    cloudflare-setup) "${compose[@]}" run --rm --no-deps -T app python3 /opt/lamp/cloudflare.py setup ;;
     exec)
         if [[ "$#" = 2 ]]; then
             "${compose[@]}" exec -T app python3 /opt/lamp/control.py exec "$1" "$2"
