@@ -62,6 +62,20 @@ def configuration():
     sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname", "relayhost", "username", "password"),
                 "cloudflare": ("token", "email")}
     if (not isinstance(value, dict) or "domain" not in value or set(value) - {"domain", "vpn", *sections}
+def resolve_identity(value):
+    """Accept an environment id or a subdomain label and return the id."""
+    if isinstance(value, str) and re.fullmatch(r"[a-f0-9]{12}", value):
+        return value
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", value):
+        raise ValueError("Invalid environment ID or subdomain.")
+    matches = [environment["id"] for environment in environments() if value in subdomain_labels(environment)]
+    if not matches:
+        raise ValueError(f"No environment has the subdomain {value}.")
+    if len(matches) > 1:
+        raise ValueError(f"Several environments have the subdomain {value}; use the id.")
+    return matches[0]
+
+
             or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", *sections))):
         raise ValueError("settings.yaml must contain domain and optionally git, apache, postfix, cloudflare and vpn mappings; see README.md.")
     dns_name = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
@@ -1126,12 +1140,12 @@ def main():
         commands.add_parser(command)
     commands.add_parser("list").add_argument("--search")
     for command in ("show", "remove", "access", "build"):
-        commands.add_parser(command).add_argument("id")
+        commands.add_parser(command).add_argument("id", type=resolve_identity)
     execute = commands.add_parser("exec")
-    execute.add_argument("id", type=validate_identity)
+    execute.add_argument("id", type=resolve_identity)
     execute.add_argument("script")
     branch = commands.add_parser("branch")
-    branch.add_argument("id", type=validate_identity)
+    branch.add_argument("id", type=resolve_identity)
     branch.add_argument("branch")
     branch.add_argument("--base", default="main")
     branch.add_argument("--operation", choices=("switch", "rename"), default="switch")

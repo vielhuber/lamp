@@ -7,15 +7,17 @@ if (( $# )); then shift; fi
 json=false
 if [[ "$command" = status || "$command" = version ]] && [[ "${1:-}" = --json ]]; then json=true; shift; fi
 if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
-    printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build <id>|list [--search <term>]|show <id>|branch|exec [<id>] "<command>"|curl|access <id>|remove <id>|ssh|cloudflare-setup|docker-build|docker-setup|docker-reset' \
+    printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build <id|subdomain>|syncdb <profile>|list [--search <term>]|show <id|subdomain>|branch|exec [<id|subdomain>] "<command>"|curl|access <id|subdomain>|remove <id|subdomain>|ssh [<id|subdomain>]|cloudflare-setup|docker-build|docker-setup|docker-reset' \
         'docker-setup creates .data with a commented config/settings.yaml, a config/env.yaml with phpmyadmin, example files for syncdb and build scripts, and docker/docker-compose.override.yml with the projects mount; existing files are kept.' \
         'cloudflare-setup creates or verifies the tunnel, the wildcard dns record, the Access application with its policies, the service token and the cache bypass rule with cloudflare.token from settings.yaml.' \
-        'build <id> reruns the configured build of an existing environment inside the running container; docker-build rebuilds the image without layer cache.' \
+        'build <id|subdomain> reruns the configured build of an existing environment inside the running container; docker-build rebuilds the image without layer cache.' \
+        'syncdb <profile> runs a .data/syncdb profile unchanged inside the container; its target must point at the container databases (localhost, root, database.password).' \
         'list --search <term> returns only environments whose values contain the term (case-insensitive).' \
         'add [--git <repository>] [--id <12-hex-id>] [--branch <branch>] [--base-branch <branch>] [--php <version>] [--vpn <profile>] [--build <command>] [--subdomain <label>] [--directory <name>] [--db-name <name>] [--db-engine mysql|postgres|sqlite] [--alias <suffix> ...] [--webroot <directory>] [--proxy-port <port>] [--proxy-exclude <path>] [--visibility private|public]' \
-        'exec [<id>] "<command>": with an id inside that environment (project directory, its php, database variables, authenticated curl), without an id as root in the container.' \
-        'branch <id> <branch> [--base <branch>] [--operation switch|rename]' \
-        'curl <id> -- <curl arguments>; access <id> (secret JSON for trusted integrations only)' \
+        'exec [<id|subdomain>] "<command>": with an id or subdomain inside that environment (project directory, its php, database variables, authenticated curl), without an id as root in the container.' \
+        'ssh [<id|subdomain>]: interactive root shell; with an environment it starts in the project directory with its variables and shows git status first.' \
+        'branch <id|subdomain> <branch> [--base <branch>] [--operation switch|rename]' \
+        'curl <id|subdomain> -- <curl arguments>; access <id|subdomain> (secret JSON for trusted integrations only)' \
         'Visibility defaults to private; public creates a hostname-specific Cloudflare Access bypass.' \
         'Each --alias adds <subdomain-or-id>-<suffix>.<domain> to the same environment; show includes all URLs.' \
         'Without --build, .data/build/<host>-<repository-path-with-hyphens>.sh is used if it exists.' \

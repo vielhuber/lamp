@@ -237,6 +237,63 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertEqual({'host': 'localhost', 'port': '3306', 'database': 'blog', 'username': 'root', 'password': 'rootpw',
                           'ssh': False, 'cmd': 'mysql', 'sql_log_bin': False}, sync.call_args.args[1]['target'])
         for arguments in (['--subdomain', 'x', '--db-name', 'x'], ['--db-name', 'x', '--db-engine', 'mysql'], ['--subdomain', 'x', '--db-name', 'a b', '--db-engine', 'mysql']):
+    def test_commands_accept_a_subdomain_instead_of_the_id(self):
+        (control.PROJECTS / 'site').mkdir()
+        identity = json.loads(self.invoke('add', '--subdomain', ['site', 'shop'][0], '--alias', 'shop'))['id']
+        self.assertEqual(identity, json.loads(self.invoke('show', 'site'))['id'])
+        self.assertEqual(identity, control.resolve_identity(identity))
+        for value in ('missing', 'shop', 'Site', 'a b'):
+            with self.subTest(value=value), self.assertRaises((ValueError, SystemExit)):
+                self.invoke('show', value)
+        self.invoke('remove', 'site')
+        self.assertEqual([], control.environments())
+
+    def test_syncdb_command_runs_the_profile_unchanged(self):
+        (control.CONFIGURATION / 'syncdb').mkdir()
+        (control.STATE / 'syncdb').mkdir()
+        with self.assertRaisesRegex(ValueError, 'No syncdb profile'):
+            self.invoke('sync', 'shop-production-local')
+        (control.CONFIGURATION / 'syncdb' / 'shop-production-local.json').write_text('{"target": {"database": "shop", "password": "root"}}')
+        seen = {}
+        def capture(arguments, **options):
+            if arguments[:1] == ['php8.5']:
+                seen['arguments'] = arguments
+                seen['profile'] = (control.STATE / 'syncdb' / 'shop-production-local.json').read_text()
+            return ''
+        self.run.side_effect = capture
+        self.assertEqual({'profile': 'shop-production-local', 'status': 'imported'}, json.loads(self.invoke('sync', 'shop-production-local')))
+        self.assertEqual('shop-production-local', seen['arguments'][-1])
+        self.assertEqual('{"target": {"database": "shop", "password": "root"}}', seen['profile'])
+        self.assertFalse((control.STATE / 'syncdb' / 'shop-production-local.json').exists())
+        with self.subTest('traversal'), self.assertRaises((ValueError, SystemExit)):
+            self.invoke('sync', '../settings')
+
+    def test_hosts_file_lists_every_environment_hostname(self):
+        (control.PROJECTS / 'site').mkdir()
+        identity = json.loads(self.invoke('add', '--subdomain', 'site', '--alias', 'shop'))['id']
+        self.assertEqual(['127.0.0.1 localhost', '127.0.0.1 site-shop.example.test # lamp', '127.0.0.1 site.example.test # lamp'],
+                         control.HOSTS.read_text().splitlines())
+        self.invoke('remove', identity)
+        self.assertEqual(['127.0.0.1 localhost'], control.HOSTS.read_text().splitlines())
+
+    def test_certificate_is_requested_once_and_renewed_afterwards(self):
+        settings = {'domain': 'example.test', 'cloudflare': {'token': 'test-token', 'email': 'jane@example.test'}}
+        with self.assertRaisesRegex(ValueError, 'cloudflare.token'):
+            control.ensure_certificate({'domain': 'example.test'})
+        with patch.object(control, 'LETSENCRYPT', control.STATE / 'letsencrypt'):
+            control.ensure_certificate(settings)
+            certbot = [call.args[0] for call in self.run.call_args_list if call.args[0][0] == 'certbot']
+            self.assertEqual(['certbot', 'certonly', '--non-interactive', '--agree-tos', '--email', 'jane@example.test', '--dns-cloudflare',
+                              '--dns-cloudflare-credentials', str(control.STATE / 'secrets' / 'cloudflare.ini'), '--dns-cloudflare-propagation-seconds', '30',
+                              '--cert-name', 'example.test', '-d', 'example.test', '-d', '*.example.test'], certbot[-1])
+            self.assertEqual('dns_cloudflare_api_token = test-token\n', (control.STATE / 'secrets' / 'cloudflare.ini').read_text())
+            self.assertEqual(0o600, (control.STATE / 'secrets' / 'cloudflare.ini').stat().st_mode & 0o777)
+            (control.STATE / 'letsencrypt' / 'live' / 'example.test').mkdir(parents=True)
+            (control.STATE / 'letsencrypt' / 'live' / 'example.test' / 'fullchain.pem').write_text('cert')
+            self.run.reset_mock()
+            control.ensure_certificate(settings)
+            self.assertEqual([['certbot', 'renew', '--non-interactive', '--quiet']], [call.args[0] for call in self.run.call_args_list if call.args[0][0] == 'certbot'])
+
             with self.subTest(arguments=arguments), self.assertRaises((ValueError, SystemExit)):
                 self.invoke('add', *arguments)
         (control.PROJECTS / 'plain').mkdir()

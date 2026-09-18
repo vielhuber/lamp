@@ -15,8 +15,12 @@ def main(arguments):
     if automatic:
         arguments = arguments[1:]
     identity = arguments.pop(0) if arguments else os.environ.get("LAMP_ID", "")
+    if not identity:
+        raise ValueError("A LAMP environment ID or subdomain is required.")
     if not re.fullmatch(r"[a-f0-9]{12}", identity):
-        raise ValueError("A LAMP environment ID is required.")
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import control
+        identity = control.resolve_identity(identity)
     if arguments[:1] == ["--"]:
         arguments = arguments[1:]
     environment = json.loads((Path("/var/lib/lamp/environments") / identity / "environment.json").read_text())
