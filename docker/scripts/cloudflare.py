@@ -11,8 +11,6 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import control  # noqa: E402
 
-APPLICATION = "lamp"
-SERVICE_TOKEN = "lamp"
 CACHE_RULE = "lamp: bypass cache"
 CREDENTIALS = "cloudflared-credentials.json"
 SERVICE_TOKEN_FILE = "cloudflare-service-token.yaml"
@@ -88,23 +86,26 @@ def setup_dns(token, zone, domain, tunnel):
     return "created"
 
 
-def setup_service_token(token, account, folder):
+def setup_service_token(token, account, domain, folder):
+    # One token per instance, named after its domain; the local file identifies an existing token by client id.
+    name = "lamp " + domain
     path = folder / SERVICE_TOKEN_FILE
     local = yaml.safe_load(path.read_text()) if path.is_file() else {}
     local = local if isinstance(local, dict) else {}
-    tokens = [item for item in listing(token, f"/accounts/{account}/access/service_tokens") if item["name"] == SERVICE_TOKEN]
-    if len(tokens) > 1:
-        raise ValueError(f"Several Access service tokens are named {SERVICE_TOKEN}; delete the extra ones.")
-    if tokens and local.get("CF-Access-Client-Id") == tokens[0]["client_id"] and local.get("CF-Access-Client-Secret"):
-        return tokens[0]["id"], "ok"
-    if tokens:
-        created = request(token, "POST", f"/accounts/{account}/access/service_tokens/{tokens[0]['id']}/rotate")
+    tokens = listing(token, f"/accounts/{account}/access/service_tokens")
+    owned = [item for item in tokens if item["client_id"] == local.get("CF-Access-Client-Id")] or [item for item in tokens if item["name"] == name]
+    if len(owned) > 1:
+        raise ValueError(f"Several Access service tokens are named {name}; delete the extra ones.")
+    if owned and local.get("CF-Access-Client-Id") == owned[0]["client_id"] and local.get("CF-Access-Client-Secret"):
+        return owned[0]["id"], "ok"
+    if owned:
+        created = request(token, "POST", f"/accounts/{account}/access/service_tokens/{owned[0]['id']}/rotate")
         status = "rotated"
     else:
-        created = request(token, "POST", f"/accounts/{account}/access/service_tokens", {"name": SERVICE_TOKEN, "duration": "forever"})
+        created = request(token, "POST", f"/accounts/{account}/access/service_tokens", {"name": name, "duration": "forever"})
         status = "created"
     write_private(path, yaml.safe_dump({"CF-Access-Client-Id": created["client_id"], "CF-Access-Client-Secret": created["client_secret"]}))
-    return created["id"] if "id" in created else tokens[0]["id"], status
+    return created["id"] if "id" in created else owned[0]["id"], status
 
 
 def policy_view(policy):
@@ -113,22 +114,24 @@ def policy_view(policy):
 
 
 def setup_application(token, account, domain, email, service_token):
+    # The application is identified by its wildcard destination, like control.sync_visibility does; its name carries the domain.
     wildcard = "*." + domain
-    applications = [app for app in listing(token, f"/accounts/{account}/access/apps") if app.get("name") == APPLICATION]
+    name = "lamp " + domain
+    applications = [app for app in listing(token, f"/accounts/{account}/access/apps") if wildcard in control.access_destinations(app)]
     if len(applications) > 1:
-        raise ValueError(f"Several Access applications are named {APPLICATION}; delete the extra ones.")
+        raise ValueError(f"Several Access applications cover {wildcard}; delete the extra ones.")
     policies = [
         {"name": "developer", "decision": "allow", "precedence": 1, "include": [{"email": {"email": email}}], "require": [], "exclude": []},
         {"name": "harness", "decision": "non_identity", "precedence": 2, "include": [{"service_token": {"token_id": service_token}}], "require": [], "exclude": []},
     ]
-    payload = {"name": APPLICATION, "type": "self_hosted", "domain": wildcard, "destinations": [{"type": "public", "uri": wildcard}],
+    payload = {"name": name, "type": "self_hosted", "domain": wildcard, "destinations": [{"type": "public", "uri": wildcard}],
                "app_launcher_visible": False, "session_duration": "24h", "policies": policies}
     if not applications:
         request(token, "POST", f"/accounts/{account}/access/apps", payload)
         return "created"
     application = applications[0]
     existing = listing(token, f"/accounts/{account}/access/apps/{application['id']}/policies")
-    current = {key: application.get(key) for key in ("type", "domain", "app_launcher_visible", "session_duration")}
+    current = {key: application.get(key) for key in ("name", "type", "domain", "app_launcher_visible", "session_duration")}
     if (current == {key: payload[key] for key in current} and control.access_destinations(application) == {wildcard}
             and [policy_view(policy) for policy in sorted(existing, key=lambda policy: policy.get("precedence") or 0)] == policies):
         return "ok"
@@ -164,8 +167,8 @@ def setup(settings, folder):
     results = {}
     tunnel, results["tunnel " + domain] = setup_tunnel(token, account, domain, folder)
     results["dns *." + domain] = setup_dns(token, zone, domain, tunnel)
-    service_token, results["service token " + SERVICE_TOKEN] = setup_service_token(token, account, folder)
-    results["access application " + APPLICATION] = setup_application(token, account, domain, email, service_token)
+    service_token, results["service token lamp " + domain] = setup_service_token(token, account, domain, folder)
+    results["access application lamp " + domain] = setup_application(token, account, domain, email, service_token)
     results["cache rule"] = setup_cache(token, zone, domain)
     return results
 

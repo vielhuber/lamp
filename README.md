@@ -10,11 +10,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary><strong>requirements</strong></summary>
 
-- linux or wsl2 on amd64
-- [docker](https://docs.docker.com/engine/install/ubuntu/) `>= 20.10.0` with the compose plugin
-- `bash`, `git`, `python3`, `flock`, `sha256sum`, `readlink` on the host
-- `/dev/net/tun` on the host (vpn support)
-- a cloudflare account with the dns zone of `<domain>`; tunnel, access and cache are set up by `./lamp cloudflare-setup`
+- [docker](https://docs.docker.com/engine/install/ubuntu/) `>= 20.10.0`
 
 </details>
 
@@ -28,6 +24,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>1. pull image</summary>
 
+- `mkdir lamp`
+- `cd lamp`
 - `docker pull ghcr.io/vielhuber/lamp:latest`
 
 </details>
@@ -36,13 +34,10 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>2. configure instance</summary>
 
-- `mkdir lamp && cd lamp`
-- `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init` (copies `lamp` and `docker/docker-compose.yml` out of the image)
-- `./lamp docker-setup` (creates `.data` with a commented `config/settings.yaml`, a `config/env.yaml` that lists phpmyadmin, example files for syncdb and build scripts, and `docker/docker-compose.override.yml` with the projects mount; never overwrites)
-- optional: change the host side of the projects mount in `docker/docker-compose.override.yml`; the container side stays `/var/www`
-- set `domain` in `.data/config/settings.yaml`
-- put ssh keys into `.data/ssh/`, syncdb profiles into `.data/syncdb/`, build scripts into `.data/build/`
-- optional: `sudo ln -s "$(pwd -P)/lamp" /usr/local/bin/lamp`
+- `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init`
+- `sudo ln -s "$(pwd -P)/lamp" /usr/local/bin/lamp`
+- `./lamp docker-setup`
+- config `.data/*.yaml` and `docker/docker-compose.override.yml`
 
 </details>
 
@@ -82,7 +77,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `./lamp stop`
 - `docker pull ghcr.io/vielhuber/lamp:latest`
-- `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init` (refreshes `lamp` and `docker/docker-compose.yml`, never `.data`)
+- `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init`
 - `./lamp start`
 
 </details>
@@ -91,28 +86,28 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary><strong>commands</strong></summary>
 
-| command                                                                 | effect                                                                                                                                                                   |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `./lamp start`                                                          | start container, wait for health, apply `.data/config/env.yaml`                                                                                                          |
-| `./lamp add [options]`                                                  | create environment, returns json; all options below are optional; `--subdomain` records a static entry in `.data/config/env.yaml`, without it the environment is dynamic |
-| `./lamp stop`                                                           | stop container, keep all data                                                                                                                                            |
-| `./lamp restart`                                                        | validate yaml, stop, start, apply                                                                                                                                        |
-| `./lamp status [--json]`                                                | container state, health, ports, supervised services                                                                                                                      |
-| `./lamp version [--json]`                                               | host checkout version and container image id                                                                                                                             |
+| command                                                                            | effect                                                                                                                                                                   |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `./lamp start`                                                                     | start container, wait for health, apply `.data/config/env.yaml`                                                                                                          |
+| `./lamp add [options]`                                                             | create environment, returns json; all options below are optional; `--subdomain` records a static entry in `.data/config/env.yaml`, without it the environment is dynamic |
+| `./lamp stop`                                                                      | stop container, keep all data                                                                                                                                            |
+| `./lamp restart`                                                                   | validate yaml, stop, start, apply                                                                                                                                        |
+| `./lamp status [--json]`                                                           | container state, health, ports, supervised services                                                                                                                      |
+| `./lamp version [--json]`                                                          | host checkout version and container image id                                                                                                                             |
 | `./lamp build <id\|subdomain>`                                                     | rerun the configured build of one environment inside the running container                                                                                               |
-| `./lamp syncdb <profile>` | run a `.data/syncdb` profile unchanged inside the container; its target must point at the container databases |
-| `./lamp list [--search <term>]`                                         | all environments as json; `--search` filters case-insensitively over all values                                                                                          |
+| `./lamp syncdb <profile>`                                                          | run a `.data/syncdb` profile unchanged inside the container; its target must point at the container databases                                                            |
+| `./lamp list [--search <term>]`                                                    | all environments as json; `--search` filters case-insensitively over all values                                                                                          |
 | `./lamp show <id\|subdomain>`                                                      | one environment as json                                                                                                                                                  |
 | `./lamp branch <id\|subdomain> <branch> [--base <b>] [--operation switch\|rename]` | switch or create branch without rebuild                                                                                                                                  |
 | `./lamp exec [<id\|subdomain>] "<command>"`                                        | with an id: in the project directory with its php, setup variables and authenticated `curl`; without: as root in the container                                           |
 | `./lamp curl <id\|subdomain> -- <curl args>`                                       | curl the environment's exact https origin with the access service token                                                                                                  |
 | `./lamp access <id\|subdomain>`                                                    | origin and access headers as json; secret, for trusted integrations only                                                                                                 |
 | `./lamp remove <id\|subdomain>`                                                    | remove environment, owned databases, runtime data; dynamic project directory only                                                                                        |
-| `./lamp ssh [<id\|subdomain>]` | interactive root shell in the container; with an environment: in its project directory with its variables, `git status` first |
-| `./lamp cloudflare-setup`                                               | create or verify tunnel, wildcard dns, access application, service token and cache rule; prints `ok`, `created`, `updated`, `rotated` or `recreated` per item            |
-| `./lamp docker-build`                                                   | rebuild the image without layer cache, keep volumes (requires stopped container)                                                                                         |
-| `./lamp docker-setup`                                                   | create `.data` with commented presets, example files and the compose override; keeps existing files                                                                      |
-| `./lamp docker-reset`                                                   | **delete all compose volumes**, then rebuild the image (requires stopped container)                                                                                      |
+| `./lamp ssh [<id\|subdomain>]`                                                     | interactive root shell in the container; with an environment: in its project directory with its variables, `git status` first                                            |
+| `./lamp cloudflare-setup`                                                          | create or verify tunnel, wildcard dns, access application, service token and cache rule; prints `ok`, `created`, `updated`, `rotated` or `recreated` per item            |
+| `./lamp docker-build`                                                              | rebuild the image without layer cache, keep volumes (requires stopped container)                                                                                         |
+| `./lamp docker-setup`                                                              | create `.data` with commented presets, example files and the compose override; keeps existing files                                                                      |
+| `./lamp docker-reset`                                                              | **delete all compose volumes**, then rebuild the image (requires stopped container)                                                                                      |
 
 ```bash
 ./lamp add \
@@ -251,19 +246,19 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `./lamp docker-setup` writes `.data/config/settings.yaml` (mode 600) with `domain` set and every optional section as a commented example
 
-| key                                    | default                 | effect                                                                                                           |
-| -------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `domain`                               | required                | base domain of every environment; a change reapplies all environments on `start` / `restart`                     |
-| `git.name`, `git.email`                | unset                   | global git identity inside the container for commits made through `exec` or `ssh`                                |
-| `apache.admin`                         | `webmaster@localhost`   | `ServerAdmin` of the shared apache configuration                                                                 |
-| `postfix.hostname`                     | `lamp.localdomain`      | `myhostname` and `/etc/mailname` of the container's postfix                                                      |
-| `postfix.relayhost`                    | empty (direct delivery) | postfix `relayhost`, e.g. `[smtp.example.com]:587`                                                               |
-| `postfix.username`, `postfix.password` | unset                   | smtp auth for the relay; written to `/etc/postfix/sasl_passwd` (mode 600) on every start                         |
-| `cloudflare.token`, `cloudflare.email` | unset                   | api token used by `cloudflare-setup`, `add`, `remove`, `start`, `restart`, and the login email allowed by access |
-| `database.password`     | generated once        | password of mysql `root` and postgres `postgres`, applied on `start` / `restart` to the servers, `/var/lib/lamp/secrets/database-password`, the vhost variables and `setup.env` |
-| `composer.github`       | unset                 | github token written to composer's global `auth.json` on `start` / `restart` for private packages and the api rate limit |
-| `php.xdebug`            | true (`docker-setup` preset: false) | false removes the xdebug module from every php version on `start` / `restart`, about 15 percent faster requests, no debugging or profiling |
-| `vpn`                                  | disabled                | see [vpn](#vpn)                                                                                                  |
+| key                                    | default                             | effect                                                                                                                                                                          |
+| -------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `domain`                               | required                            | base domain of every environment; a change reapplies all environments on `start` / `restart`                                                                                    |
+| `git.name`, `git.email`                | unset                               | global git identity inside the container for commits made through `exec` or `ssh`                                                                                               |
+| `apache.admin`                         | `webmaster@localhost`               | `ServerAdmin` of the shared apache configuration                                                                                                                                |
+| `postfix.hostname`                     | `lamp.localdomain`                  | `myhostname` and `/etc/mailname` of the container's postfix                                                                                                                     |
+| `postfix.relayhost`                    | empty (direct delivery)             | postfix `relayhost`, e.g. `[smtp.example.com]:587`                                                                                                                              |
+| `postfix.username`, `postfix.password` | unset                               | smtp auth for the relay; written to `/etc/postfix/sasl_passwd` (mode 600) on every start                                                                                        |
+| `cloudflare.token`, `cloudflare.email` | unset                               | api token used by `cloudflare-setup`, `add`, `remove`, `start`, `restart`, and the login email allowed by access                                                                |
+| `database.password`                    | generated once                      | password of mysql `root` and postgres `postgres`, applied on `start` / `restart` to the servers, `/var/lib/lamp/secrets/database-password`, the vhost variables and `setup.env` |
+| `composer.github`                      | unset                               | github token written to composer's global `auth.json` on `start` / `restart` for private packages and the api rate limit                                                        |
+| `php.xdebug`                           | true (`docker-setup` preset: false) | false removes the xdebug module from every php version on `start` / `restart`, about 15 percent faster requests, no debugging or profiling                                      |
+| `vpn`                                  | disabled                            | see [vpn](#vpn)                                                                                                                                                                 |
 
 - all values are applied on every container start, so a pulled image and a locally built image behave the same; edit the file and run `./lamp restart`
 - invalid or unknown keys stop the start before any environment is touched
@@ -283,22 +278,22 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - `./lamp docker-setup` writes `.data/config/env.yaml` with a commented example entry and the phpmyadmin entry below; the first `add` or reconciliation rewrites the file without comments, one blank line between entries
 - phpmyadmin: `https://github.com/phpmyadmin/phpmyadmin.git` on branch `STABLE` as subdomain `phpmyadmin`, private, so cloudflare access protects it like every other environment; its build script `.data/build/github.com-phpmyadmin-phpmyadmin.sh` runs composer and yarn and writes `config.inc.php` with automatic root login from the container's database password; delete the entry if you do not want it
 
-| key             | default  | meaning                                                                                                                         |
-| --------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `git`           | null     | ssh `git@host:path` or credential-free https url; null for an empty environment                                                 |
-| `branch`        | null     | null selects the repository default branch                                                                                      |
-| `subdomain`     | required | one lowercase label or a list; first label is the primary host and the static project path                                      |
-| `aliases`       | omitted  | suffixes: `<primary>-<suffix>.<domain>` share the same checkout and databases                                                   |
-| `directory`     | first subdomain | folder under `/var/www`; written explicitly, may be nested like `tourconcept/new`                          |
-| `db_name`       | null     | fixed database of a static environment; null creates nothing                                                  |
-| `db_engine`     | null     | `mysql`, `postgres` or `sqlite`; required with `db_name`; only mysql and sqlite can be imported with `syncdb`  |
-| `webroot`       | null     | directory relative to the checkout; null picks `public/` or `web/` with `index.php`, else root                                  |
-| `php`           | omitted  | explicit version; omitted reads the repository root `.phprc`, else `8.5`                                                        |
-| `vpn`           | null     | required tunnel name from `settings.yaml`                                                                                       |
-| `proxy_port`    | null     | forward the vhost to `http://127.0.0.1:<port>/` (`ProxyPreserveHost On`)                                                        |
-| `proxy_exclude` | null     | one path prefix that stays on php, e.g. `/admin`                                                                                |
-| `visibility`    | private  | `public` adds a cloudflare access bypass for exactly this environment's hostnames                                               |
-| `build`         | omitted  | inline build; omitted uses `.data/build/<host>-<owner>-<repo>.sh` if present; `':'` for no-op                                   |
+| key             | default         | meaning                                                                                                       |
+| --------------- | --------------- | ------------------------------------------------------------------------------------------------------------- |
+| `git`           | null            | ssh `git@host:path` or credential-free https url; null for an empty environment                               |
+| `branch`        | null            | null selects the repository default branch                                                                    |
+| `subdomain`     | required        | one lowercase label or a list; first label is the primary host and the static project path                    |
+| `aliases`       | omitted         | suffixes: `<primary>-<suffix>.<domain>` share the same checkout and databases                                 |
+| `directory`     | first subdomain | folder under `/var/www`; written explicitly, may be nested like `tourconcept/new`                             |
+| `db_name`       | null            | fixed database of a static environment; null creates nothing                                                  |
+| `db_engine`     | null            | `mysql`, `postgres` or `sqlite`; required with `db_name`; only mysql and sqlite can be imported with `syncdb` |
+| `webroot`       | null            | directory relative to the checkout; null picks `public/` or `web/` with `index.php`, else root                |
+| `php`           | omitted         | explicit version; omitted reads the repository root `.phprc`, else `8.5`                                      |
+| `vpn`           | null            | required tunnel name from `settings.yaml`                                                                     |
+| `proxy_port`    | null            | forward the vhost to `http://127.0.0.1:<port>/` (`ProxyPreserveHost On`)                                      |
+| `proxy_exclude` | null            | one path prefix that stays on php, e.g. `/admin`                                                              |
+| `visibility`    | private         | `public` adds a cloudflare access bypass for exactly this environment's hostnames                             |
+| `build`         | omitted         | inline build; omitted uses `.data/build/<host>-<owner>-<repo>.sh` if present; `':'` for no-op                 |
 
 - project path: `/var/www/<directory or first subdomain>` for static environments, `/var/www/_environments/<id>` for dynamic ones; the same path on host and container
 - existing directories are adopted without clone, pull, checkout, chown or build; missing directories are cloned and built
@@ -325,17 +320,17 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - no build runs without a script or `build` setting
 - `./lamp docker-setup` writes the example `.data/build/github.com-owner-project.sh`: syncdb import, `.env` created from an embedded heredoc with `APP_URL` and `DB_*` rewritten from the setup variables, then composer and npm; copy it per project and keep only the steps the project has
 
-| variable                                    | value                                                         |
-| ------------------------------------------- | ------------------------------------------------------------- |
-| `LAMP_ID`                                   | environment id                                                |
-| `LAMP_URL`, `APP_URL`                       | `https://<hostname>`                                          |
-| `LAMP_PROJECT_DIR`                          | checkout path                                                 |
-| `LAMP_DATA_DIR`                             | persistent per-environment data directory                     |
-| `DB_CONNECTION`                             | static: `mysql`, `pgsql` or `sqlite` from `db_engine`, unset without database; dynamic: `mysql`, a sqlite `syncdb` switches it |
-| `DB_HOST`, `DB_PORT`                        | `localhost`, `3306` (mysql) or `5432` (postgres)               |
+| variable                                    | value                                                                                                                                                   |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LAMP_ID`                                   | environment id                                                                                                                                          |
+| `LAMP_URL`, `APP_URL`                       | `https://<hostname>`                                                                                                                                    |
+| `LAMP_PROJECT_DIR`                          | checkout path                                                                                                                                           |
+| `LAMP_DATA_DIR`                             | persistent per-environment data directory                                                                                                               |
+| `DB_CONNECTION`                             | static: `mysql`, `pgsql` or `sqlite` from `db_engine`, unset without database; dynamic: `mysql`, a sqlite `syncdb` switches it                          |
+| `DB_HOST`, `DB_PORT`                        | `localhost`, `3306` (mysql) or `5432` (postgres)                                                                                                        |
 | `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | static: `db_name` with `root` / `postgres` and the container database password, or the sqlite file path; dynamic: `lamp_<id>` with a generated password |
-| `PGHOST`, `PGPORT`                          | `localhost`, `5432`; static only with `db_engine: postgres`   |
-| `PGDATABASE`, `PGUSER`, `PGPASSWORD`        | static: `db_name` / `postgres`; dynamic: `lamp_<id>` / generated password |
+| `PGHOST`, `PGPORT`                          | `localhost`, `5432`; static only with `db_engine: postgres`                                                                                             |
+| `PGDATABASE`, `PGUSER`, `PGPASSWORD`        | static: `db_name` / `postgres`; dynamic: `lamp_<id>` / generated password                                                                               |
 
 - the same variables are set in the environment's vhost (`SetEnv`) and reach php-fpm as fastcgi parameters: `getenv('DB_DATABASE')` or `$_SERVER['DB_DATABASE']` in php, laravel's `env()` prefers them over `.env`; cli runs get them through `exec <id>` and `build`
 - wordpress: `define('DB_NAME', getenv('DB_DATABASE'))`, `define('DB_USER', getenv('DB_USERNAME'))`, `define('DB_PASSWORD', getenv('DB_PASSWORD'))`, `define('DB_HOST', getenv('DB_HOST'))` in the local branch of `wp-config.php`, no generated files needed
@@ -403,7 +398,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>access</summary>
 
-- `cloudflare-setup` creates the self-hosted application `lamp` for `*.<domain>` with policy `developer` (allow `cloudflare.email`) and policy `harness` (service token `lamp`), and writes `.data/cloudflare/cloudflare-service-token.yaml`; a rerun restores these settings if they were changed
+- `cloudflare-setup` creates the self-hosted application `lamp <domain>` for `*.<domain>` (found by its wildcard destination, so several lamp instances with different domains share one account) with policy `developer` (allow `cloudflare.email`) and policy `harness` (service token `lamp`), and writes `.data/cloudflare/cloudflare-service-token.yaml`; a rerun restores these settings if they were changed
 - customers: a separate application per exact hostname with an `allow` policy for their exact emails via one-time pin; revoke sessions when withdrawing access
 - session tip: global session one month, application session 24 hours, developer policy `same as application`
 - `visibility: public` creates `lamp-public:<domain>:<id>` with a `bypass › everyone` policy for exactly the environment's hostnames; private removes it; the wildcard stays untouched

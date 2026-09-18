@@ -97,8 +97,8 @@ class CloudflareSetupTest(unittest.TestCase):
     def test_first_run_creates_everything_and_a_rerun_changes_nothing(self):
         self.api.rules = {'rules': [{'id': 'keep', 'description': 'other', 'expression': 'true', 'action': 'set_cache_settings', 'action_parameters': {'cache': True}, 'enabled': True, 'last_updated': 'x'}]}
         results = cloudflare.setup(self.settings, self.folder)
-        self.assertEqual({'tunnel example.test': 'created', 'dns *.example.test': 'created', 'service token lamp': 'created',
-                          'access application lamp': 'created', 'cache rule': 'created'}, results)
+        self.assertEqual({'tunnel example.test': 'created', 'dns *.example.test': 'created', 'service token lamp example.test': 'created',
+                          'access application lamp example.test': 'created', 'cache rule': 'created'}, results)
         credentials = json.loads((self.folder / 'cloudflared-credentials.json').read_text())
         self.assertEqual({'AccountTag', 'TunnelSecret', 'TunnelID', 'TunnelName'}, set(credentials))
         self.assertEqual(self.api.tunnels[0]['id'], credentials['TunnelID'])
@@ -108,7 +108,7 @@ class CloudflareSetupTest(unittest.TestCase):
         self.assertEqual(self.api.tokens[0]['client_id'], service['CF-Access-Client-Id'])
         self.assertEqual(self.api.tokens[0]['client_secret'], service['CF-Access-Client-Secret'])
         app = self.api.apps[0]
-        self.assertEqual(('lamp', '*.example.test', 'self_hosted'), (app['name'], app['domain'], app['type']))
+        self.assertEqual(('lamp example.test', '*.example.test', 'self_hosted'), (app['name'], app['domain'], app['type']))
         policies = self.api.policies[app['id']]
         self.assertEqual([('developer', 'allow', [{'email': {'email': 'jane@example.test'}}]), ('harness', 'non_identity', [{'service_token': {'token_id': self.api.tokens[0]['id']}}])],
                          [(policy['name'], policy['decision'], policy['include']) for policy in policies])
@@ -126,8 +126,8 @@ class CloudflareSetupTest(unittest.TestCase):
         (self.folder / 'cloudflared-credentials.json').unlink()
         (self.folder / 'cloudflare-service-token.yaml').unlink()
         results = cloudflare.setup(self.settings, self.folder)
-        self.assertEqual({'tunnel example.test': 'recreated', 'dns *.example.test': 'updated', 'service token lamp': 'rotated',
-                          'access application lamp': 'ok', 'cache rule': 'ok'}, results)
+        self.assertEqual({'tunnel example.test': 'recreated', 'dns *.example.test': 'updated', 'service token lamp example.test': 'rotated',
+                          'access application lamp example.test': 'ok', 'cache rule': 'ok'}, results)
         self.assertEqual(1, len(self.api.tunnels))
         self.assertNotEqual(old_tunnel, self.api.tunnels[0]['id'])
         self.assertEqual(self.api.tunnels[0]['id'] + '.cfargotunnel.com', self.api.records[0]['content'])
@@ -141,7 +141,7 @@ class CloudflareSetupTest(unittest.TestCase):
         self.api.policies[app['id']][0]['include'] = [{'everyone': {}}]
         self.api.rules['rules'][0]['action_parameters'] = {'cache': True}
         results = cloudflare.setup(self.settings, self.folder)
-        self.assertEqual('updated', results['access application lamp'])
+        self.assertEqual('updated', results['access application lamp example.test'])
         self.assertEqual('updated', results['cache rule'])
         self.assertEqual(1, len(self.api.apps))
         self.assertEqual([{'type': 'public', 'uri': '*.example.test'}], self.api.apps[0]['destinations'])
