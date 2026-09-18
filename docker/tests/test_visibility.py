@@ -17,7 +17,7 @@ class VisibilityTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        for name in ('CONFIGURATION', 'STATE', 'PROJECTS', 'SITES', 'ENABLED'):
+        for name in ('CONFIGURATION', 'SETUP', 'STATE', 'PROJECTS', 'SITES', 'ENABLED'):
             path = self.root / name
             path.mkdir()
             mocked = patch.object(control, name, path)
@@ -310,11 +310,12 @@ class VisibilityTest(unittest.TestCase):
 class CloudflareRequestTest(unittest.TestCase):
     def test_api_errors_never_expose_response_or_credentials(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(control, 'CONFIGURATION', Path(directory)), \
+             patch.object(control, 'SETUP', Path(directory)), \
              patch.object(control.http.client, 'HTTPSConnection') as connection:
             folder = Path(directory) / 'cloudflare'
             folder.mkdir()
-            (Path(directory) / 'config').mkdir()
-            (Path(directory) / 'config' / 'settings.yaml').write_text('domain: example.test\ncloudflare:\n  token: test-secret\n  email: jane@example.test\n')
+            (Path(directory) / 'setup.yaml').write_text('domain: example.test\n')
+            (Path(directory) / 'settings.yaml').write_text('cloudflare:\n  token: test-secret\n  email: jane@example.test\n')
             (folder / 'cloudflared-credentials.json').write_text('{"AccountTag":"' + 'a' * 32 + '"}')
             response = connection.return_value.getresponse.return_value
             response.status = 403

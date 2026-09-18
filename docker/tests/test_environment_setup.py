@@ -18,7 +18,7 @@ class EnvironmentSetupTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
-        for name in ('CONFIGURATION', 'STATE', 'PROJECTS', 'SITES', 'ENABLED'):
+        for name in ('CONFIGURATION', 'SETUP', 'STATE', 'PROJECTS', 'SITES', 'ENABLED'):
             path = root / name
             path.mkdir()
             mocked = patch.object(control, name, path)
@@ -40,8 +40,7 @@ class EnvironmentSetupTest(unittest.TestCase):
         (control.STATE / 'environments').mkdir()
         (control.STATE / 'secrets').mkdir()
         (control.STATE / 'secrets' / 'database-password').write_text('rootpw\n')
-        (control.CONFIGURATION / 'config').mkdir()
-        (control.CONFIGURATION / 'config' / 'settings.yaml').write_text('domain: example.test\n')
+        (control.SETUP / 'setup.yaml').write_text('domain: example.test\n')
         self.settings = {'domain': 'example.test'}
         self.identity = 'abcdef012345'
 

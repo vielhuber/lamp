@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 import yaml
 
 CONFIGURATION = Path("/etc/lamp")
+SETUP = Path("/etc/lamp-config")
 STATE = Path("/var/lib/lamp")
 PROJECTS = Path("/var/www")
 SITES = Path("/etc/apache2/sites-available")
@@ -77,12 +78,19 @@ def resolve_identity(value):
 
 
 def configuration():
-    value = yaml.safe_load((CONFIGURATION / "config" / "settings.yaml").read_text())
+    # setup.yaml belongs to this host, settings.yaml to the data folder that several hosts may share.
+    setup = yaml.safe_load((SETUP / "setup.yaml").read_text())
+    if (not isinstance(setup, dict) or "domain" not in setup or set(setup) - {"domain", "data"}
+            or (setup.get("data") is not None and not isinstance(setup["data"], str))):
+        raise ValueError("setup.yaml must contain domain and optionally data; see README.md.")
+    path = CONFIGURATION / "settings.yaml"
+    value = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
     sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname", "relayhost", "username", "password"),
                 "cloudflare": ("token", "email"), "database": ("password",), "composer": ("github",)}
-    if (not isinstance(value, dict) or "domain" not in value or set(value) - {"domain", "vpn", "php", *sections}
+    if (not isinstance(value, dict) or set(value) - {"vpn", "php", *sections}
             or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", "php", *sections))):
-        raise ValueError("settings.yaml must contain domain and optionally git, apache, postfix, cloudflare, database, php and vpn mappings; see README.md.")
+        raise ValueError("settings.yaml may contain only git, apache, postfix, cloudflare, database, composer, php and vpn mappings; the domain belongs in setup.yaml; see README.md.")
+    value["domain"] = setup["domain"]
     php = value.get("php") or {}
     if set(php) - {"xdebug"} or any(not isinstance(entry, bool) for entry in php.values()):
         raise ValueError("php may contain only xdebug: true or false.")
@@ -418,7 +426,7 @@ def ordered_settings(settings):
 
 
 def write_desired(entries, original):
-    path = CONFIGURATION / "config" / "env.yaml"
+    path = SETUP / "env.yaml"
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as temporary:
         # One document per entry, separated by blank lines, so the file stays readable when edited by hand.
         temporary.write("\n".join(yaml.safe_dump([ordered_settings(entry)], sort_keys=False, allow_unicode=True) for entry in entries) or "[]\n")
@@ -431,7 +439,7 @@ def write_desired(entries, original):
 
 
 def read_desired():
-    path = CONFIGURATION / "config" / "env.yaml"
+    path = SETUP / "env.yaml"
     if not path.exists():
         write_desired([entry for entry in (validate_specification(specification(item)) for item in environments()) if subdomain_labels(entry)], None)
     original = path.read_bytes()
@@ -582,7 +590,7 @@ def cloudflare_request(method, resource, payload=None):
     token = (configuration().get("cloudflare") or {}).get("token")
     if not token:
         raise ValueError("Set cloudflare.token and cloudflare.email in settings.yaml and run lamp cloudflare-setup.")
-    account = json.loads((CONFIGURATION / "cloudflare" / "cloudflared-credentials.json").read_text()).get("AccountTag")
+    account = json.loads((SETUP / "cloudflare" / "cloudflared-credentials.json").read_text()).get("AccountTag")
     if not isinstance(account, str) or not re.fullmatch(r"[a-f0-9]{32}", account):
         raise ValueError("Invalid cloudflared-credentials.json; run lamp cloudflare-setup.")
     connection = http.client.HTTPSConnection("api.cloudflare.com", timeout=20)
@@ -978,7 +986,7 @@ def reload_apache():
 
 
 def connector(settings):
-    credentials = CONFIGURATION / "cloudflare" / "cloudflared-credentials.json"
+    credentials = SETUP / "cloudflare" / "cloudflared-credentials.json"
     program = Path("/run/lamp-supervisor/cloudflared-lamp.conf")
     if not credentials.exists():
         program.unlink(missing_ok=True)
@@ -1318,7 +1326,7 @@ def main():
         else:
             environment = load_environment(arguments.id)
             names = () if environment.get("visibility") == "public" else ("CF-Access-Client-Id", "CF-Access-Client-Secret")
-            headers = yaml.safe_load((CONFIGURATION / "cloudflare" / "cloudflare-service-token.yaml").read_text()) if names else {}
+            headers = yaml.safe_load((SETUP / "cloudflare" / "cloudflare-service-token.yaml").read_text()) if names else {}
             if not isinstance(headers, dict) or any(not isinstance(headers.get(name), str) or not headers[name] or re.search(r"[\r\n\0]", headers[name]) for name in names):
                 raise ValueError("Invalid Cloudflare service token configuration.")
             result = {"origin": environment["url"], "headers": {name: headers[name] for name in names}}

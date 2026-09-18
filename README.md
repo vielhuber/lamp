@@ -36,8 +36,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init`
 - `sudo ln -s "$(pwd -P)/lamp" /usr/local/bin/lamp`
-- `./lamp docker-setup`
-- config `.data/*.yaml` and `docker/docker-compose.override.yml`
+- `./lamp docker-setup` (or `./lamp docker-setup git@github.com:<owner>/lamp-data.git` with a [data repository](#data-repository))
+- config `.config/setup.yaml`, `.data/settings.yaml` and `docker/docker-compose.override.yml`
 
 </details>
 
@@ -52,7 +52,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
     - `Zone › Zone › Read`
     - `Zone › DNS › Edit`
     - `Zone › Cache Rules › Edit`
-- set `cloudflare.token` and `cloudflare.email` in `.data/config/settings.yaml`
+- set `cloudflare.token` and `cloudflare.email` in `.data/settings.yaml`
 - `./lamp cloudflare-setup`
 
 </details>
@@ -88,8 +88,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 | command                                                                            | effect                                                                                                                                                                   |
 | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `./lamp start`                                                                     | start container, wait for health, apply `.data/config/env.yaml`                                                                                                          |
-| `./lamp add [options]`                                                             | create environment, returns json; all options below are optional; `--subdomain` records a static entry in `.data/config/env.yaml`, without it the environment is dynamic |
+| `./lamp start`                                                                     | start container, wait for health, apply `.config/env.yaml`                                                                                                          |
+| `./lamp add [options]`                                                             | create environment, returns json; all options below are optional; `--subdomain` records a static entry in `.config/env.yaml`, without it the environment is dynamic |
 | `./lamp stop`                                                                      | stop container, keep all data                                                                                                                                            |
 | `./lamp restart`                                                                   | validate yaml, stop, start, apply                                                                                                                                        |
 | `./lamp status [--json]`                                                           | container state, health, ports, supervised services                                                                                                                      |
@@ -106,7 +106,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `./lamp ssh [<id\|subdomain>]`                                                     | interactive root shell in the container; with an environment: in its project directory with its variables, `git status` first                                            |
 | `./lamp cloudflare-setup`                                                          | create or verify tunnel, wildcard dns, access application, service token and cache rule; prints `ok`, `created`, `updated`, `rotated` or `recreated` per item            |
 | `./lamp docker-build`                                                              | rebuild the image without layer cache, keep volumes (requires stopped container)                                                                                         |
-| `./lamp docker-setup`                                                              | create `.data` with commented presets, example files and the compose override; keeps existing files                                                                      |
+| `./lamp docker-setup [<data repository>]`                                          | create `.config` and `.data` with commented presets, example files and the compose override; keeps existing files; with a data repository `.data` is left to the clone   |
 | `./lamp docker-reset`                                                              | **delete all compose volumes**, then rebuild the image (requires stopped container)                                                                                      |
 
 ```bash
@@ -185,7 +185,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `./lamp stop`
 - `./lamp docker-reset` (deletes databases, environment metadata and every other compose volume; `.data` and `/var/www` survive)
-- `./lamp start` (re-registers all environments from `.data/config/env.yaml`, including database imports and builds)
+- `./lamp start` (re-registers all environments from `.config/env.yaml`, including database imports and builds)
 
 </details>
 
@@ -221,21 +221,23 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 | path                                 | contents                                                                          | survives `docker-reset` |
 | ------------------------------------ | --------------------------------------------------------------------------------- | ----------------------- |
-| `.data/config/settings.yaml`         | `domain`, optional `git`, `apache`, `postfix`, `vpn` (mode 600)                   | yes                     |
+| `.config/setup.yaml`                 | host-specific: `domain`, optional `data` repository (mode 600)                    | yes                     |
+| `.config/env.yaml`                   | host-specific: desired environments (mode 600)                                    | yes                     |
+| `.config/cloudflare/`                | host-specific: tunnel credentials and access service token, by `cloudflare-setup` | yes                     |
+| `.data/settings.yaml`                | optional `git`, `apache`, `postfix`, `cloudflare`, `php`, `vpn`, … (mode 600)     | yes                     |
 | `docker/docker-compose.override.yml` | host-specific: projects mount, extra mounts and ports (gitignored)                | yes                     |
-| `.data/config/env.yaml`              | desired environments (mode 600)                                                   | yes                     |
 | `.data/build/*.sh`                   | shared repository build scripts (mode 600)                                        | yes                     |
 | `.data/syncdb/*.json`                | original syncdb profiles (mode 600)                                               | yes                     |
 | `.data/ssh/`                         | container `/root/.ssh` (keys, config, known_hosts)                                | yes                     |
-| `.data/cloudflare/`                  | tunnel credentials and access service token, written by `cloudflare-setup`        | yes                     |
 | `.data/vpn/`                         | openvpn / wireguard profiles                                                      | yes                     |
 | `.logs/`                             | host-side command logs                                                            | yes                     |
 | `/var/www`                           | project checkouts; host directory set in `docker/docker-compose.override.yml`     | yes                     |
 | compose volumes                      | mysql, postgresql, redis, apache sites, mail, certificates, `/var/lib/lamp` state | **no**                  |
 
-- `.data` is mounted at `/etc/lamp`, `.data/ssh` at `/root/.ssh`
-- `.data` and `.logs` are excluded from git and from the image
-- back up `.data` and database-consistent dumps separately; `docker-reset` is not an update that preserves environments
+- `.data` is mounted at `/etc/lamp`, `.data/ssh` at `/root/.ssh`, `.config` at `/etc/lamp-config`
+- `.data` holds what several hosts can share, `.config` what belongs to this host; lamp writes only to `.config`
+- `.data`, `.config` and `.logs` are excluded from git and from the image
+- back up `.data`, `.config` and database-consistent dumps separately; `docker-reset` is not an update that preserves environments
 - initial mysql root / postgres password: `/var/lib/lamp/secrets/database-password` in the state volume, generated on first start; set your own before the first database initialization with `docker compose -f docker/docker-compose.yml run --rm --no-deps app bash -c 'umask 077; mkdir -p /var/lib/lamp/secrets; read -rsp "password: " p; printf "%s\n" "$p" > /var/lib/lamp/secrets/database-password'`
 
 </details>
@@ -244,11 +246,15 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>configuration</summary>
 
-- `./lamp docker-setup` writes `.data/config/settings.yaml` (mode 600) with `domain` set and every optional section as a commented example
+- `./lamp docker-setup` writes `.config/setup.yaml` (mode 600) with `domain` and `.data/settings.yaml` (mode 600) with every optional section as a commented example
 
-| key                                    | default                             | effect                                                                                                                                                                          |
+| key in `setup.yaml` | default  | effect                                                                                       |
+| ------------------- | -------- | -------------------------------------------------------------------------------------------- |
+| `domain`            | required | base domain of every environment; a change reapplies all environments on `start` / `restart` |
+| `data`              | unset    | ssh url of the private [data repository](#data-repository) that holds `.data`                |
+
+| key in `settings.yaml`                 | default                             | effect                                                                                                                                                                          |
 | -------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `domain`                               | required                            | base domain of every environment; a change reapplies all environments on `start` / `restart`                                                                                    |
 | `git.name`, `git.email`                | unset                               | global git identity inside the container for commits made through `exec` or `ssh`                                                                                               |
 | `apache.admin`                         | `webmaster@localhost`               | `ServerAdmin` of the shared apache configuration                                                                                                                                |
 | `postfix.hostname`                     | `lamp.localdomain`                  | `myhostname` and `/etc/mailname` of the container's postfix                                                                                                                     |
@@ -267,15 +273,29 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <details>
 
+<summary>data repository</summary>
+
+- `data: git@github.com:<owner>/lamp-data.git` in `.config/setup.yaml` makes `.data` a clone of that private repository: `settings.yaml`, `ssh/`, `vpn/`, `build/`, `syncdb/` are the same on every host, only `.config` differs
+- `./lamp docker-setup <url>` writes the entry and leaves `.data` to the clone; an existing `.data` that is no clone stops `start` until it is moved away
+- first `start`, `restart` or `cloudflare-setup`: lamp clones on the host; when the host's own ssh identity may not read the repository, it asks once for a private key on the terminal (not echoed, not stored, not logged)
+- every further `start` / `restart` / `cloudflare-setup`: `git pull --ff-only` with `.data/ssh/id_rsa`; a failed pull (offline, diverged, conflicting local edits) prints a warning and continues with the local state
+- lamp never commits or pushes: edit build scripts and profiles in any clone (also directly in `.data`), commit and push there, the other hosts receive them on their next start
+- after every clone and pull the folder is set to owner-only modes, because git stores no private modes and ssh refuses readable keys
+- the repository contains private keys, vpn profiles, api tokens and production database credentials; keep it private
+
+</details>
+
+<details>
+
 <summary>environments</summary>
 
-- `.data/config/env.yaml` is a list of the static environments, without ids; `start` / `restart` reconcile it, `add --subdomain` appends to it, `remove` deletes from it
+- `.config/env.yaml` is a list of the static environments, without ids; `start` / `restart` reconcile it, `add --subdomain` appends to it, `remove` deletes from it
 - an entry and a running environment are the same when every value matches; changing any value in the file removes the old environment and provisions a new one; static directories and fixed databases stay
 - dynamic environments (`add` without `--subdomain`) live in the runtime state only, are never written to the file and are never touched by `start` / `restart`; remove them with `lamp remove <id>`
 - ids are runtime identifiers reported by `add`, `show` and `list`; `add --id` reuses one and is idempotent: identical settings return the existing environment, different settings fail; every command that takes an id also accepts a subdomain label of a static environment
 - a file from the previous id-keyed format is converted on first use; its dynamic entries are dropped from the file, the environments themselves stay
 
-- `./lamp docker-setup` writes `.data/config/env.yaml` with a commented example entry and the phpmyadmin entry below; the first `add` or reconciliation rewrites the file without comments, one blank line between entries
+- `./lamp docker-setup` writes `.config/env.yaml` with a commented example entry and the phpmyadmin entry below; the first `add` or reconciliation rewrites the file without comments, one blank line between entries
 - phpmyadmin: `https://github.com/phpmyadmin/phpmyadmin.git` on branch `STABLE` as subdomain `phpmyadmin`, private, so cloudflare access protects it like every other environment; its build script `.data/build/github.com-phpmyadmin-phpmyadmin.sh` runs composer and yarn and writes `config.inc.php` with automatic root login from the container's database password; delete the entry if you do not want it
 
 | key             | default         | meaning                                                                                                       |
@@ -384,12 +404,12 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>tunnel</summary>
 
-- `cloudflare-setup` creates the locally managed tunnel `<domain>`, writes `.data/cloudflare/cloudflared-credentials.json` and points the proxied cname `*.<domain>` at it; a tunnel of that name without local credentials is deleted and recreated
+- `cloudflare-setup` creates the locally managed tunnel `<domain>`, writes `.config/cloudflare/cloudflared-credentials.json` and points the proxied cname `*.<domain>` at it; a tunnel of that name without local credentials is deleted and recreated
 - supervisor runs `cloudflared` inside the container; the wildcard ingress forwards `*.<domain>` to apache's `*:443` with the let's encrypt certificate (origin name `<domain>`), everything else gets 404; no container port is published
 - certificate: on every `start` / `restart` lamp requests or renews a let's encrypt certificate for `<domain>` and `*.<domain>` through the cloudflare dns challenge with `cloudflare.token` (stored in the `certificates` volume, renewed daily by cron); a domain change requests a new one
 - every environment hostname resolves to `127.0.0.1` inside the container (`/etc/hosts`), so builds, `critical`, headless browsers and `curl` inside the container reach the local origin directly with a valid certificate, without cloudflare access
 - without the credentials file `start` works but `add` and configured environments are refused
-- `domain` changes in `settings.yaml` reapply all environments on the next `start` / `restart`; run `cloudflare-setup` again for the new zone
+- `domain` changes in `setup.yaml` reapply all environments on the next `start` / `restart`; run `cloudflare-setup` again for the new zone
 - never run the same tunnel from two machines
 
 </details>
@@ -398,7 +418,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>access</summary>
 
-- `cloudflare-setup` creates the self-hosted application `lamp <domain>` for `*.<domain>` (found by its wildcard destination, so several lamp instances with different domains share one account) with policy `developer` (allow `cloudflare.email`) and policy `harness` (service token `lamp`), and writes `.data/cloudflare/cloudflare-service-token.yaml`; a rerun restores these settings if they were changed
+- `cloudflare-setup` creates the self-hosted application `lamp <domain>` for `*.<domain>` (found by its wildcard destination, so several lamp instances with different domains share one account) with policy `developer` (allow `cloudflare.email`) and policy `harness` (service token `lamp`), and writes `.config/cloudflare/cloudflare-service-token.yaml`; a rerun restores these settings if they were changed
 - customers: a separate application per exact hostname with an `allow` policy for their exact emails via one-time pin; revoke sessions when withdrawing access
 - session tip: global session one month, application session 24 hours, developer policy `same as application`
 - `visibility: public` creates `lamp-public:<domain>:<id>` with a `bypass › everyone` policy for exactly the environment's hostnames; private removes it; the wildcard stays untouched
@@ -431,7 +451,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>service token (harness)</summary>
 
-- created by `cloudflare-setup` as `.data/cloudflare/cloudflare-service-token.yaml`; if the file is lost, a rerun rotates the secret
+- created by `cloudflare-setup` as `.config/cloudflare/cloudflare-service-token.yaml`; if the file is lost, a rerun rotates the secret
 - `./lamp curl <id> -- -fsS https://<hostname>/` and the `curl` wrapper inside `exec <id>` send the headers only to that environment's exact https origin, never follow redirects with credentials, and refuse unsupported options
 - `./lamp access <id>` prints origin and headers as json for trusted integrations; keep it out of visible tool calls and logs
 - public environments send no token; their own application logins still apply
@@ -472,7 +492,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>vpn</summary>
 
-- the `vpn` section of `.data/config/settings.yaml` lists tunnels with `name`, `type` (`openvpn` or `wireguard`), `config`, optional `username` / `password`, `routes` and `hosts`; `./lamp docker-setup` leaves a commented example in the file
+- the `vpn` section of `.data/settings.yaml` lists tunnels with `name`, `type` (`openvpn` or `wireguard`), `config`, optional `username` / `password`, `routes` and `hosts`; `./lamp docker-setup` leaves a commented example in the file
 
 - profiles in `.data/vpn/` (mode 600); names: lowercase, max twelve characters, letter first
 - `./lamp restart` applies changes; `./lamp exec 'supervisorctl start|stop|status vpn-office'` controls a tunnel

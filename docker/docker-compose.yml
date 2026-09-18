@@ -23,6 +23,7 @@ services:
             start_period: 30s
         volumes:
             - ${LAMP_DATA_DIR:-../.data}:/etc/lamp
+            - ${LAMP_CONFIG_DIR:-../.config}:/etc/lamp-config
             - ${LAMP_DATA_DIR:-../.data}/ssh:/root/.ssh
             - mysql:/var/lib/mysql
             - postgresql:/var/lib/postgresql

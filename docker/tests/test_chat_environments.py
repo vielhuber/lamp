@@ -24,12 +24,11 @@ class ChatEnvironmentsTest(unittest.TestCase):
         for name in ('configuration', 'state', 'projects'):
             (self.root / name).mkdir()
         (self.root / 'hosts').write_text('127.0.0.1 localhost\n')
-        for name, folder in [('CONFIGURATION', 'configuration'), ('STATE', 'state'), ('PROJECTS', 'projects'), ('HOSTS', 'hosts')]:
+        for name, folder in [('CONFIGURATION', 'configuration'), ('SETUP', 'configuration'), ('STATE', 'state'), ('PROJECTS', 'projects'), ('HOSTS', 'hosts')]:
             mocked = patch.object(control, name, self.root / folder)
             mocked.start()
             self.addCleanup(mocked.stop)
-        (control.CONFIGURATION / 'config').mkdir()
-        (control.CONFIGURATION / 'config' / 'settings.yaml').write_text('domain: example.invalid\n')
+        (control.SETUP / 'setup.yaml').write_text('domain: example.invalid\n')
         self.identity = 'abcdef012345'
         self.project = control.PROJECTS / '_environments' / self.identity
         self.project.mkdir(parents=True)
@@ -183,7 +182,7 @@ class ChatEnvironmentsTest(unittest.TestCase):
         self.assertEqual(str(self.project), os.getcwd())
 
     def test_access_exports_only_required_headers_for_the_exact_environment(self):
-        folder = control.CONFIGURATION / 'cloudflare'
+        folder = control.SETUP / 'cloudflare'
         folder.mkdir()
         (folder / 'cloudflare-service-token.yaml').write_text(yaml.safe_dump({
             'CF-Access-Client-Id': 'test-id', 'CF-Access-Client-Secret': 'test-secret', 'unrelated': 'never-export'
@@ -193,7 +192,7 @@ class ChatEnvironmentsTest(unittest.TestCase):
         self.assertEqual({'CF-Access-Client-Id': 'test-id', 'CF-Access-Client-Secret': 'test-secret'}, result['headers'])
 
     def test_read_only_commands_do_not_wait_for_provisioning(self):
-        folder = control.CONFIGURATION / 'cloudflare'
+        folder = control.SETUP / 'cloudflare'
         folder.mkdir()
         (folder / 'cloudflare-service-token.yaml').write_text(yaml.safe_dump({
             'CF-Access-Client-Id': 'test-id', 'CF-Access-Client-Secret': 'test-secret'

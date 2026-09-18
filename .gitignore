@@ -1,6 +1,7 @@
 *.log
 .logs/
 .data/
+.config/
 /id_rsa*
 /syncdb/
 __pycache__/

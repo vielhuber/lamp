@@ -7,8 +7,8 @@ if (( $# )); then shift; fi
 json=false
 if [[ "$command" = status || "$command" = version ]] && [[ "${1:-}" = --json ]]; then json=true; shift; fi
 if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
-    printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build <id|subdomain>|syncdb <profile>|list [--search <term>]|show <id|subdomain>|branch|exec [<id|subdomain>] "<command>"|curl|access <id|subdomain>|remove <id|subdomain>|ssh [<id|subdomain>]|cloudflare-setup|docker-build|docker-setup|docker-reset' \
-        'docker-setup creates .data with a commented config/settings.yaml, a config/env.yaml with phpmyadmin, example files for syncdb and build scripts, and docker/docker-compose.override.yml with the projects mount; existing files are kept.' \
+    printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build <id|subdomain>|syncdb <profile>|list [--search <term>]|show <id|subdomain>|branch|exec [<id|subdomain>] "<command>"|curl|access <id|subdomain>|remove <id|subdomain>|ssh [<id|subdomain>]|cloudflare-setup|docker-build|docker-setup [<data repository>]|docker-reset' \
+        'docker-setup [<data repository>] creates .config with setup.yaml (domain, optional data repository) and env.yaml with phpmyadmin, .data with a commented settings.yaml and example files for syncdb and build scripts (not with a data repository, which is cloned into .data on the first start and pulled on every further one), and docker/docker-compose.override.yml with the projects mount; existing files are kept.' \
         'cloudflare-setup creates or verifies the tunnel, the wildcard dns record, the Access application with its policies, the service token and the cache bypass rule with cloudflare.token from settings.yaml.' \
         'build <id|subdomain> reruns the configured build of an existing environment inside the running container; docker-build rebuilds the image without layer cache.' \
         'syncdb <profile> runs a .data/syncdb profile unchanged inside the container; its target must point at the container databases (localhost, root, database.password).' \
@@ -26,7 +26,8 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
     exit 0
 fi
 case "$command" in
-    docker-setup|docker-build|docker-reset|cloudflare-setup|start|restart|stop|status|version) test "$#" -eq 0 ;;
+    docker-build|docker-reset|cloudflare-setup|start|restart|stop|status|version) test "$#" -eq 0 ;;
+    docker-setup) test "$#" -le 1 ;;
     ssh) test "$#" -le 1 ;;
     build) test "$#" -eq 1 ;;
     syncdb) test "$#" -eq 1 ;;
@@ -39,6 +40,12 @@ case "$command" in
 esac
 if [[ "$command" = docker-setup ]]; then
     data="$directory/.data"
+    config="$directory/.config"
+    data_repository=${1:-}
+    if [[ -n "$data_repository" && ! "$data_repository" =~ ^git@[A-Za-z0-9.-]+:[A-Za-z0-9_./-]+$ ]]; then
+        printf '%s\n' 'The data repository must be an ssh url like git@github.com:<owner>/lamp-data.git.' >&2
+        exit 2
+    fi
     preset() {
         local path=$1 mode=$2
         if [[ -e "$path" ]]; then
@@ -50,12 +57,54 @@ if [[ "$command" = docker-setup ]]; then
         chmod "$mode" "$path"
         printf 'created %s\n' "${path#"$directory/"}"
     }
-    mkdir -p "$data" "$data/config" "$data/build" "$data/syncdb" "$data/ssh" "$data/cloudflare" "$data/vpn" "$directory/docker"
-    chmod 700 "$data" "$data/config" "$data/build" "$data/syncdb" "$data/ssh" "$data/cloudflare" "$data/vpn"
-    preset "$data/config/settings.yaml" 600 <<'PRESET'
+    mkdir -p "$config" "$config/cloudflare" "$directory/docker"
+    chmod 700 "$config" "$config/cloudflare"
+    data_line='# data: git@github.com:<owner>/lamp-data.git'
+    if [[ -n "$data_repository" ]]; then data_line="data: $data_repository"; fi
+    preset "$config/setup.yaml" 600 <<PRESET
+# settings of this host; .data can be shared between hosts, .config never is.
 # base domain of every environment: https://<subdomain-or-id>.<domain>
 domain: example.com
 
+# optional: private git repository (ssh url) that holds the complete .data folder; cloned on the first start, pulled on every further one
+$data_line
+PRESET
+    preset "$config/env.yaml" 600 <<'PRESET'
+# static environments, one entry per project; lamp add --subdomain appends, lamp remove deletes, start/restart reconciles.
+# an entry and a running environment are the same when every value matches. dynamic environments are not listed here.
+# - git: git@github.com:<owner>/<project>.git
+#   branch: null
+#   subdomain: project
+#   aliases: [shop, blog]
+#   directory: project
+#   db_name: project
+#   db_engine: mysql
+#   webroot: public
+#   php: '8.5'
+#   vpn: null
+#   proxy_port: null
+#   proxy_exclude: null
+#   visibility: private
+#   build: 'syncdb project-production-local && composer install'
+
+# phpmyadmin with automatic root login behind cloudflare access; built by .data/build/github.com-phpmyadmin-phpmyadmin.sh
+- git: https://github.com/phpmyadmin/phpmyadmin.git
+  branch: STABLE
+  subdomain: phpmyadmin
+  directory: phpmyadmin
+  db_name: null
+  db_engine: null
+  webroot: null
+  vpn: null
+  proxy_port: null
+  proxy_exclude: null
+  visibility: private
+PRESET
+    # with a data repository .data is a clone, so no presets are written into it
+    if [[ -z "$data_repository" ]]; then
+        mkdir -p "$data" "$data/build" "$data/syncdb" "$data/ssh" "$data/vpn"
+        chmod 700 "$data" "$data/build" "$data/syncdb" "$data/ssh" "$data/vpn"
+        preset "$data/settings.yaml" 600 <<'PRESET'
 # optional: git identity for commits made inside the container
 # git:
 #     name: Your Name
@@ -106,38 +155,7 @@ php:
 #           type: wireguard
 #           config: /etc/lamp/vpn/wg.conf
 PRESET
-    preset "$data/config/env.yaml" 600 <<'PRESET'
-# static environments, one entry per project; lamp add --subdomain appends, lamp remove deletes, start/restart reconciles.
-# an entry and a running environment are the same when every value matches. dynamic environments are not listed here.
-# - git: git@github.com:<owner>/<project>.git
-#   branch: null
-#   subdomain: project
-#   aliases: [shop, blog]
-#   directory: project
-#   db_name: project
-#   db_engine: mysql
-#   webroot: public
-#   php: '8.5'
-#   vpn: null
-#   proxy_port: null
-#   proxy_exclude: null
-#   visibility: private
-#   build: 'syncdb project-production-local && composer install'
-
-# phpmyadmin with automatic root login behind cloudflare access; built by .data/build/github.com-phpmyadmin-phpmyadmin.sh
-- git: https://github.com/phpmyadmin/phpmyadmin.git
-  branch: STABLE
-  subdomain: phpmyadmin
-  directory: phpmyadmin
-  db_name: null
-  db_engine: null
-  webroot: null
-  vpn: null
-  proxy_port: null
-  proxy_exclude: null
-  visibility: private
-PRESET
-    preset "$data/syncdb/example-production-local.json" 600 <<'PRESET'
+        preset "$data/syncdb/example-production-local.json" 600 <<'PRESET'
 {
     "engine": "mysql",
     "source": {
@@ -167,7 +185,7 @@ PRESET
     }
 }
 PRESET
-    preset "$data/build/github.com-owner-project.sh" 600 <<'PRESET'
+        preset "$data/build/github.com-owner-project.sh" 600 <<'PRESET'
 #!/usr/bin/env bash
 set -euo pipefail
 syncdb example-production-local
@@ -187,7 +205,7 @@ composer install --no-interaction
 npm install
 npm run prod
 PRESET
-    preset "$data/build/github.com-phpmyadmin-phpmyadmin.sh" 600 <<'PRESET'
+        preset "$data/build/github.com-phpmyadmin-phpmyadmin.sh" 600 <<'PRESET'
 #!/usr/bin/env bash
 set -euo pipefail
 composer install --no-dev --no-interaction
@@ -206,6 +224,7 @@ echo '$cfg[\'ExecTimeLimit\'] = 6000;' . "\n";
 PHP
 chmod 600 config.inc.php
 PRESET
+    fi
     preset "$directory/docker/docker-compose.override.yml" 644 <<'PRESET'
 # host-specific settings, ignored by git.
 services:
@@ -225,7 +244,11 @@ services:
             #   bind:
             #       create_host_path: false
 PRESET
-    printf '%s\n' 'next: set domain, cloudflare.token and cloudflare.email in .data/config/settings.yaml, then ./lamp cloudflare-setup and ./lamp start'
+    if [[ -n "$data_repository" ]]; then
+        printf '%s\n' 'next: set domain in .config/setup.yaml, then ./lamp cloudflare-setup (clones .data first) and ./lamp start'
+    else
+        printf '%s\n' 'next: set domain in .config/setup.yaml, cloudflare.token and cloudflare.email in .data/settings.yaml, then ./lamp cloudflare-setup and ./lamp start'
+    fi
     exit 0
 fi
 if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = start || "$command" = restart ]]; then
@@ -262,6 +285,7 @@ if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = sta
     printf '[%s] %s started\nLog: %s\n' "$(date -u +%FT%TZ)" "$command" "$log_file"
 fi
 export LAMP_DATA_DIR="$directory/.data"
+export LAMP_CONFIG_DIR="$directory/.config"
 # interactive calls get a terminal inside the container (progress bars); piped calls stay plain
 tty=(-T)
 if [[ -t 0 && -t 1 ]]; then tty=(); fi
@@ -311,12 +335,14 @@ if [[ "$command" = status || "$command" = version ]]; then
     if [[ "$service_result" != 0 && "$service_result" != 3 ]]; then exit "$service_result"; fi
     exit 0
 fi
-mkdir -p "$LAMP_DATA_DIR/config" "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/build"
-chmod 700 "$LAMP_DATA_DIR" "$LAMP_DATA_DIR/config" "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/build"
-if [[ ! -f "$LAMP_DATA_DIR/config/settings.yaml" || ! -f "$directory/docker/docker-compose.override.yml" ]]; then
-    printf '%s\n' 'Missing .data/config/settings.yaml or docker/docker-compose.override.yml. Run ./lamp docker-setup first.' >&2
+if [[ ! -f "$LAMP_CONFIG_DIR/setup.yaml" || ! -f "$directory/docker/docker-compose.override.yml" ]]; then
+    printf '%s\n' 'Missing .config/setup.yaml or docker/docker-compose.override.yml. Run ./lamp docker-setup first.' >&2
     exit 1
 fi
+mkdir -p "$LAMP_CONFIG_DIR/cloudflare"
+chmod 700 "$LAMP_CONFIG_DIR" "$LAMP_CONFIG_DIR/cloudflare"
+data_repository=$(sed -n 's/^data:[[:space:]]*//p' "$LAMP_CONFIG_DIR/setup.yaml" | sed "s/[[:space:]]*\(#.*\)\?$//; s/^[\"']//; s/[\"']$//")
+if [[ "$data_repository" = null || "$data_repository" = '~' ]]; then data_repository=; fi
 # environments belong to www-data while harnesses run as root on the host
 if [[ "$command" = start || "$command" = add ]] && ! git config --global --get-all safe.directory | grep -qx '\*'; then
     git config --global --add safe.directory '*'
@@ -348,6 +374,43 @@ case "$command" in
         esac
         ;;
 esac
+# .data as a clone of the private data repository: cloned once with a pasted key, pulled with its own key afterwards
+if [[ -n "$data_repository" ]] && [[ "$command" = start || "$command" = restart || "$command" = cloudflare-setup ]]; then
+    if [[ -d "$LAMP_DATA_DIR/.git" ]]; then
+        GIT_SSH_COMMAND="ssh -i $(printf %q "$LAMP_DATA_DIR/ssh/id_rsa") -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            git -C "$LAMP_DATA_DIR" pull --quiet --ff-only \
+            || printf 'Warning: .data could not be updated from %s; continuing with the local state.\n' "$data_repository" >&2
+    elif [[ -e "$LAMP_DATA_DIR" ]]; then
+        printf '.data exists but is not a clone of %s. Move it away (its content belongs into that repository) and run the command again.\n' "$data_repository" >&2
+        exit 1
+    elif ! GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new' git clone --quiet "$data_repository" "$LAMP_DATA_DIR" 2> /dev/null; then
+        if ! { : < /dev/tty; } 2> /dev/null; then
+            printf 'The first clone of %s needs a terminal to ask for a private ssh key.\n' "$data_repository" >&2
+            exit 1
+        fi
+        key_file=$(mktemp)
+        printf 'Paste a private ssh key that may read %s (used once for the first clone, not stored):\n' "$data_repository" > /dev/tty
+        stty -echo < /dev/tty
+        while IFS= read -r line < /dev/tty; do
+            printf '%s\n' "$line" >> "$key_file"
+            if [[ "$line" = -----END*PRIVATE\ KEY----- ]]; then break; fi
+        done
+        stty echo < /dev/tty
+        clone_result=0
+        GIT_SSH_COMMAND="ssh -i $key_file -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" git clone --quiet "$data_repository" "$LAMP_DATA_DIR" || clone_result=$?
+        rm -f "$key_file"
+        if [[ "$clone_result" != 0 ]]; then
+            printf 'The data repository could not be cloned with this key.\n' >&2
+            exit 1
+        fi
+    fi
+    # git keeps no private modes; ssh refuses keys that others can read
+    chmod -R go= "$LAMP_DATA_DIR"
+fi
+if [[ -z "$data_repository" ]]; then
+    mkdir -p "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/build"
+    chmod 700 "$LAMP_DATA_DIR" "$LAMP_DATA_DIR/ssh" "$LAMP_DATA_DIR/syncdb" "$LAMP_DATA_DIR/build"
+fi
 case "$command" in
     docker-build) "${compose[@]}" build --no-cache ;;
     docker-reset)

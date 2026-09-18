@@ -59,7 +59,7 @@ def main(arguments):
         raise ValueError("Authenticated curl only accepts this environment's HTTPS origin.")
     if environment.get("visibility") == "public":
         return subprocess.run(["/usr/bin/curl", "--disable", *arguments, "--globoff", "--max-redirs", "0"]).returncode
-    headers = yaml.safe_load(Path("/etc/lamp/cloudflare/cloudflare-service-token.yaml").read_text())
+    headers = yaml.safe_load(Path("/etc/lamp-config/cloudflare/cloudflare-service-token.yaml").read_text())
     names = ("CF-Access-Client-Id", "CF-Access-Client-Secret")
     if not isinstance(headers, dict) or any(not isinstance(headers.get(name), str) or not headers[name] or re.search(r"[\r\n\0]", headers[name]) for name in names):
         raise ValueError("Invalid Cloudflare service token configuration.")

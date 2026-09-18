@@ -13,7 +13,7 @@ if sys.argv[1:] not in (["prepare"], ["validate"]):
     raise SystemExit("Usage: vpn.py prepare|validate")
 
 try:
-    configuration = Path("/etc/lamp/config/settings.yaml")
+    configuration = Path("/etc/lamp/settings.yaml")
     profiles = Path("/etc/lamp/vpn")
     runtime = Path("/run/lamp-vpn")
     supervisor = Path("/run/lamp-supervisor")

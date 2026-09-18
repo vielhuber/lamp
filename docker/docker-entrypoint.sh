@@ -14,7 +14,7 @@ if [[ ! -d /install ]]; then
     exit 1
 fi
 
-# init only ships the host cli and compose file; .data is never touched, so it also refreshes an existing installation.
+# init only ships the host cli and compose file; .data and .config are never touched, so it also refreshes an existing installation.
 temporary_directory="/install/.lamp-init.$$"
 trap 'rm -rf "$temporary_directory"' EXIT INT TERM
 mkdir "$temporary_directory" "$temporary_directory/docker"
@@ -30,4 +30,4 @@ mv -f "$temporary_directory/docker/docker-compose.yml" /install/docker/docker-co
 rm -rf "$temporary_directory"
 trap - EXIT INT TERM
 
-printf 'lamp initialized. run ./lamp docker-setup, set domain and cloudflare in .data/config/settings.yaml, then ./lamp cloudflare-setup and ./lamp start.\n'
+printf 'lamp initialized. run ./lamp docker-setup, set domain in .config/setup.yaml and cloudflare in .data/settings.yaml, then ./lamp cloudflare-setup and ./lamp start.\n'

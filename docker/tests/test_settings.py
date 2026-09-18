@@ -14,7 +14,7 @@ class SettingsTest(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
-        for name, path in [('CONFIGURATION', self.root), ('APACHE_SETTINGS', self.root / 'lamp.conf'), ('MAILNAME', self.root / 'mailname'),
+        for name, path in [('CONFIGURATION', self.root), ('SETUP', self.root), ('APACHE_SETTINGS', self.root / 'lamp.conf'), ('MAILNAME', self.root / 'mailname'),
                            ('SASL_PASSWORD', self.root / 'sasl_passwd')]:
             mocked = patch.object(control, name, path)
             mocked.start()
@@ -22,31 +22,39 @@ class SettingsTest(unittest.TestCase):
         mocked = patch.object(control, 'run')
         self.run = mocked.start()
         self.addCleanup(mocked.stop)
-        (self.root / 'config').mkdir()
+        (self.root / 'setup.yaml').write_text('domain: example.test\n')
 
     def test_optional_sections_are_validated(self):
-        (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\ngit:\n  name: Jane Doe\n  email: jane@example.test\n'
+        (self.root / 'settings.yaml').write_text('git:\n  name: Jane Doe\n  email: jane@example.test\n'
                                                'apache:\n  admin: admin@example.test\npostfix:\n  hostname: mail.example.test\n')
         settings = control.configuration()
         self.assertEqual({'name': 'Jane Doe', 'email': 'jane@example.test'}, settings['git'])
-        (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\ngit: null\n')
+        (self.root / 'settings.yaml').write_text('git: null\n')
         self.assertIsNone(control.configuration()['git'])
-        (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\npostfix:\n  relayhost: "[smtp.example.test]:587"\n')
+        (self.root / 'settings.yaml').write_text('postfix:\n  relayhost: "[smtp.example.test]:587"\n')
         self.assertEqual('[smtp.example.test]:587', control.configuration()['postfix']['relayhost'])
-        (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\ncloudflare:\n  token: t0ken\n  email: jane@example.test\n')
+        (self.root / 'settings.yaml').write_text('cloudflare:\n  token: t0ken\n  email: jane@example.test\n')
         self.assertEqual({'token': 't0ken', 'email': 'jane@example.test'}, control.configuration()['cloudflare'])
-        (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\ndatabase:\n  password: root\n')
+        (self.root / 'settings.yaml').write_text('database:\n  password: root\n')
         self.assertEqual({'password': 'root'}, control.configuration()['database'])
-        (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\nphp:\n  xdebug: false\n')
+        (self.root / 'settings.yaml').write_text('php:\n  xdebug: false\n')
         self.assertEqual({'xdebug': False}, control.configuration()['php'])
         for text in ['git: {nickname: x}', 'git: {name: ""}', 'git: {name: "a\\nb"}', 'git: [name]', 'apache: {admin: "a b"}',
                      'postfix: {hostname: "Mail.Example"}', 'postfix: {hostname: "a b.test"}', 'postfix: {relayhost: "smtp host"}',
                      'postfix: {relayhost: "smtp://x"}', 'postfix: {relayhost: "[a.test]:587", username: "u"}',
                      'postfix: {username: "u", password: "p"}', 'cloudflare: {token: t}', 'cloudflare: {token: "a b", email: x@y}',
                      'cloudflare: {token: t, email: nomail}', 'database: {user: x}', 'database: {password: ""}', 'php: {xdebug: "no"}',
-                     'php: {jit: true}', 'composer: {token: x}', 'composer: {github: "a b"}', 'unknown: 1']:
+                     'php: {jit: true}', 'composer: {token: x}', 'composer: {github: "a b"}', 'unknown: 1', 'domain: example.test']:
             with self.subTest(text=text), self.assertRaises(ValueError):
-                (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\n' + text + '\n')
+                (self.root / 'settings.yaml').write_text(text + '\n')
+                control.configuration()
+
+    def test_setup_holds_the_domain_and_the_data_repository(self):
+        (self.root / 'setup.yaml').write_text('domain: example.test\ndata: git@example.test:owner/lamp-data.git\n')
+        self.assertEqual({'domain': 'example.test'}, control.configuration())
+        for text in ['data: git@example.test:owner/lamp-data.git', 'domain: example.test\nother: 1', 'domain: example.test\ndata: [x]', 'domain: Example.Test']:
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                (self.root / 'setup.yaml').write_text(text + '\n')
                 control.configuration()
 
     def test_settings_are_applied_and_fall_back_to_defaults(self):

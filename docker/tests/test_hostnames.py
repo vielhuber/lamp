@@ -48,12 +48,11 @@ class HostnamesTest(unittest.TestCase):
     def test_subdomain_list_roundtrips_through_yaml(self):
         identity = 'abcdef012345'
         value = control.validate_specification({'subdomain': ['one', 'two']})
-        with tempfile.TemporaryDirectory() as directory, patch.object(control, 'CONFIGURATION', Path(directory)):
-            (Path(directory) / 'config').mkdir()
+        with tempfile.TemporaryDirectory() as directory, patch.object(control, 'SETUP', Path(directory)):
             control.write_desired([value], None)
             entries, original = control.read_desired()
             self.assertEqual(['one', 'two'], entries[0]['subdomain'])
-            self.assertEqual(original, (Path(directory) / 'config' / 'env.yaml').read_bytes())
+            self.assertEqual(original, (Path(directory) / 'env.yaml').read_bytes())
 
     def test_explicit_subdomains_collide_with_other_hosts_and_aliases(self):
         first = control.validate_specification({'subdomain': ['demo', 'other']})
