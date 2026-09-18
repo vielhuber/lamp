@@ -732,9 +732,13 @@ def vhost(environment):
     hostname = environment["hostname"]
     root = environment["document_root"]
     aliases = "    ServerAlias " + " ".join(hostnames(environment)[1:]) + "\n" if len(hostnames(environment)) > 1 else ""
+    # The build variables reach php-fpm as fastcgi parameters: getenv() and $_SERVER in php, env() in laravel.
+    variables = ""
+    for key, value in environment_variables(environment).items():
+        variables += f'    SetEnv {key} "' + value.replace("\\", "\\\\").replace('"', '\\"') + '"\n'
     settings = f'''    ServerName {hostname}
 {aliases}    DocumentRoot "{root}"
-    <Directory "{root}">
+{variables}    <Directory "{root}">
         Options -Indexes +FollowSymLinks
         AllowOverride All
         CGIPassAuth On
