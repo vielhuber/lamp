@@ -29,8 +29,8 @@ case "$command" in
     docker-setup|docker-build|docker-reset|cloudflare-setup|start|restart|stop|status|version) test "$#" -eq 0 ;;
     ssh) test "$#" -le 1 ;;
     build) test "$#" -eq 1 ;;
-    list) test "$#" -eq 0 || [[ "$#" = 2 && "$1" = --search ]] ;;
     syncdb) test "$#" -eq 1 ;;
+    list) test "$#" -eq 0 || [[ "$#" = 2 && "$1" = --search ]] ;;
     remove|show|access) test "$#" -eq 1 ;;
     exec) test "$#" -ge 1 && test "$#" -le 2 ;;
     curl|branch) ;;
@@ -78,7 +78,6 @@ cloudflare:
     token: '<TOKEN>'
     email: you@example.com
 
-# optional: vpn tunnels; profiles live in .data/vpn/, names are lowercase, at most twelve characters, letter first
 # xdebug module for every php version; false keeps requests about 15 percent faster, true loads it in trigger mode for the browser extension and XDEBUG_TRIGGER
 php:
     xdebug: false
@@ -87,6 +86,7 @@ php:
 # database:
 #     password: '<PASSWORD>'
 
+# optional: vpn tunnels; profiles live in .data/vpn/, names are lowercase, at most twelve characters, letter first
 # vpn:
 #     enabled: true
 #     tunnels:

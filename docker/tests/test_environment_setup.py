@@ -207,13 +207,13 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertNotIn('lamp_', inputs)
         setup = Path(environment['setup_environment']).read_text()
         self.assertIn("export DB_CONNECTION=pgsql\n", setup)
+        self.assertIn('export PATH=' + str(control.STATE / 'environments' / environment['id'] / 'bin') + ':"$PATH"\n', setup)
+        self.assertNotIn('export PATH=/', setup.replace('export PATH=' + str(control.STATE), ''))
         self.assertIn("export PGDATABASE=shop\n", setup)
         self.assertIn("export PGUSER=postgres\n", setup)
         self.assertIn("export DB_PASSWORD=rootpw\n", setup)
         (control.CONFIGURATION / 'syncdb').mkdir()
         (control.CONFIGURATION / 'syncdb' / 'shop.json').write_text(json.dumps({'engine': 'mysql', 'source': {}}))
-        self.assertIn('export PATH=' + str(control.STATE / 'environments' / environment['id'] / 'bin') + ':"$PATH"\n', setup)
-        self.assertNotIn('export PATH=/', setup.replace('export PATH=' + str(control.STATE), ''))
         with patch.object(control, 'run_sync') as sync, self.assertRaisesRegex(ValueError, 'profile is for mysql'):
             control.sync_database(environment, 'shop')
         sync.assert_not_called()
@@ -229,6 +229,14 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertEqual({'host': 'localhost', 'port': '3306', 'database': 'blog', 'username': 'root', 'password': 'rootpw',
                           'ssh': False, 'cmd': 'mysql', 'sql_log_bin': False}, sync.call_args.args[1]['target'])
         for arguments in (['--subdomain', 'x', '--db-name', 'x'], ['--db-name', 'x', '--db-engine', 'mysql'], ['--subdomain', 'x', '--db-name', 'a b', '--db-engine', 'mysql']):
+            with self.subTest(arguments=arguments), self.assertRaises((ValueError, SystemExit)):
+                self.invoke('add', *arguments)
+        (control.PROJECTS / 'plain').mkdir()
+        self.invoke('add', '--subdomain', 'plain')
+        plain = [item for item in control.environments() if item['subdomain'] == 'plain'][0]
+        self.assertNotIn('DB_', Path(plain['setup_environment']).read_text())
+        self.assertIsNone(plain['database'])
+
     def test_commands_accept_a_subdomain_instead_of_the_id(self):
         (control.PROJECTS / 'site').mkdir()
         identity = json.loads(self.invoke('add', '--subdomain', ['site', 'shop'][0], '--alias', 'shop'))['id']
@@ -285,14 +293,6 @@ class EnvironmentSetupTest(unittest.TestCase):
             self.run.reset_mock()
             control.ensure_certificate(settings)
             self.assertEqual([['certbot', 'renew', '--non-interactive', '--quiet']], [call.args[0] for call in self.run.call_args_list if call.args[0][0] == 'certbot'])
-
-            with self.subTest(arguments=arguments), self.assertRaises((ValueError, SystemExit)):
-                self.invoke('add', *arguments)
-        (control.PROJECTS / 'plain').mkdir()
-        self.invoke('add', '--subdomain', 'plain')
-        plain = [item for item in control.environments() if item['subdomain'] == 'plain'][0]
-        self.assertNotIn('DB_', Path(plain['setup_environment']).read_text())
-        self.assertIsNone(plain['database'])
 
     def test_build_output_is_written_to_a_private_log_named_in_the_failure(self):
         project = control.PROJECTS / 'logged'

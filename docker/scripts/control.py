@@ -62,11 +62,6 @@ def validate_identity(identity):
     return identity
 
 
-def configuration():
-    value = yaml.safe_load((CONFIGURATION / "config" / "settings.yaml").read_text())
-    sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname", "relayhost", "username", "password"),
-                "cloudflare": ("token", "email")}
-    if (not isinstance(value, dict) or "domain" not in value or set(value) - {"domain", "vpn", *sections}
 def resolve_identity(value):
     """Accept an environment id or a subdomain label and return the id."""
     if isinstance(value, str) and re.fullmatch(r"[a-f0-9]{12}", value):
@@ -109,6 +104,8 @@ def configuration():
 
 
 def apply_settings(settings):
+    # xdebug stays loaded in trigger mode unless php.xdebug is false; the module is toggled for every php version, cli and fpm.
+    run(["phpenmod" if (settings.get("php") or {}).get("xdebug", True) else "phpdismod", "-v", "ALL", "-s", "ALL", "xdebug"])
     identity = settings.get("git") or {}
     for key in ("name", "email"):
         if key in identity:
@@ -169,8 +166,6 @@ def root_password():
     return (STATE / "secrets" / "database-password").read_text().strip()
 
 
-def migrate_specification(value):
-    if not isinstance(value, dict) or "syncdb" not in value:
 def ensure_certificate(settings):
     """Obtain or renew the Let's Encrypt wildcard certificate for the domain through the cloudflare dns challenge."""
     token = (settings.get("cloudflare") or {}).get("token")
@@ -221,6 +216,8 @@ def apply_database_password(settings):
     return True
 
 
+def migrate_specification(value):
+    if not isinstance(value, dict) or "syncdb" not in value:
         return value
     value = dict(value)
     profile = value.pop("syncdb")
@@ -509,9 +506,9 @@ def reconcile(settings, desired, *, validate_only=False):
             check_checkout(current[identity], value)
     if validate_only:
         return
+    apply_database_password(settings)
     sync_visibility(settings, desired, publish=False)
     for identity, value in desired.items():
-    apply_database_password(settings)
         if identity in current and (current[identity].get("project_owned") or current[identity].get("setup_environment")):
             ensure_vpn(value["vpn"])
     retired = False
@@ -874,11 +871,6 @@ def sync_database(environment, profile_name):
     run_sync(environment, profile)
 
 
-def run_sync(environment, profile):
-    profile_name = "lamp-" + environment["id"]
-    destination = STATE / "syncdb" / (profile_name + ".json")
-    write_json(destination, profile)
-    try:
 def run_profile(profile_name):
     """Run a .data/syncdb profile exactly as written; its target credentials must fit the container databases."""
     source = CONFIGURATION / "syncdb" / (profile_name + ".json")
@@ -893,6 +885,11 @@ def run_profile(profile_name):
         destination.unlink(missing_ok=True)
 
 
+def run_sync(environment, profile):
+    profile_name = "lamp-" + environment["id"]
+    destination = STATE / "syncdb" / (profile_name + ".json")
+    write_json(destination, profile)
+    try:
         # syncdb cleans its working directory; never run it in a project or profile directory.
         with tempfile.TemporaryDirectory(prefix="lamp-sync-") as working_directory:
             # stdout is reserved for the exports the build's syncdb function evaluates; progress and errors go to the build log.
@@ -1137,7 +1134,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         if build is not None and (project_owned or force_build):
             log = directory / "build.log"
             print(f"{hostname} [{identity}] {project}: building, log {log}", file=sys.stderr)
-            with log.open("w") as handle:
+            with log.open("wb") as handle:
                 os.umask(0o022)
                 try:
                     # The build runs on a pseudo-terminal, so tools show progress (pv, npm) as they would interactively;
@@ -1186,10 +1183,10 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         (directory / "data").chmod(0o755)
         directory.chmod(0o711)
         for path in directory.iterdir():
-        sync_hosts()
             if path.is_file():
                 path.chmod(0o600)
         vhost(environment)
+        sync_hosts()
         if batch is None:
             run(["supervisorctl", "restart", "php" + environment["php"] + "-fpm"])
             reload_apache()
@@ -1229,10 +1226,10 @@ def remove(identity):
     if environment.get("mysql_owned") or environment.get("postgres_owned"):
         database(environment, remove=True)
     if not subdomain_labels(environment) and project.exists():
-    sync_hosts()
         shutil.rmtree(project)
     (SITES / name).unlink(missing_ok=True)
     shutil.rmtree(STATE / "environments" / identity)
+    sync_hosts()
     run(["supervisorctl", "reread"])
     run(["supervisorctl", "update"])
     return {"id": identity, "status": "removed"}
@@ -1255,6 +1252,7 @@ def main():
     branch.add_argument("--base", default="main")
     branch.add_argument("--operation", choices=("switch", "rename"), default="switch")
     commands.add_parser("syncdb").add_argument("profile")
+    commands.add_parser("sync").add_argument("profile")
     create = commands.add_parser("add")
     create.add_argument("--git")
     create.add_argument("--id", type=validate_identity)
@@ -1284,7 +1282,6 @@ def main():
         setup = environment.get("setup_environment")
         os.execvp("bash", ["bash", "-c", "set -e\n" + ("source " + shlex.quote(setup) + "\n" if setup else "") + arguments.script])
     if arguments.command == "syncdb":
-    commands.add_parser("sync").add_argument("profile")
         # The parent build already holds control.lock while this child performs the import.
         environment = load_environment(os.environ.get("LAMP_ID"))
         if not environment.get("databases_ready"):
@@ -1329,11 +1326,11 @@ def main():
             for directory in (STATE / "environments", STATE / "syncdb", PROJECTS, CONFIGURATION / "ssh"):
                 directory.mkdir(parents=True, exist_ok=True)
             (STATE / "environments").chmod(0o711)
-            ensure_certificate(settings)
-            sync_hosts()
             run(["git", "config", "--global", "--replace-all", "safe.directory", str(PROJECTS) + "/*",
                  "^" + re.escape(str(PROJECTS)) + "/"])
             apply_settings(settings)
+            ensure_certificate(settings)
+            sync_hosts()
             # Leftovers of the former built-in phpMyAdmin vhost and of the local https certificates.
             for leftover in (ENABLED / "lamp-phpmyadmin.conf", SITES / "lamp-phpmyadmin.conf", ENABLED / "phpmyadmin.conf",
                              *(STATE / "environments").glob("*/tls.*")):
@@ -1355,15 +1352,15 @@ def main():
             default.write_text(f"""<VirtualHost *:80>
     ServerName lamp.invalid
     <Location />
+        Require all denied
+    </Location>
+</VirtualHost>
 <VirtualHost *:443>
     ServerName {settings['domain']}
     SSLEngine on
     SSLCertificateFile "{LETSENCRYPT}/live/{settings['domain']}/fullchain.pem"
     SSLCertificateKeyFile "{LETSENCRYPT}/live/{settings['domain']}/privkey.pem"
     <Location />
-        Require all denied
-    </Location>
-</VirtualHost>
         Require all denied
     </Location>
 </VirtualHost>
@@ -1476,6 +1473,9 @@ def main():
         elif arguments.command == "reconcile":
             reconcile(settings, desired)
             return
+        elif arguments.command == "sync":
+            run_profile(arguments.profile)
+            result = {"profile": arguments.profile, "status": "imported"}
         elif arguments.command == "build":
             identity = validate_identity(arguments.id)
             environment = load_environment(identity)
@@ -1505,6 +1505,3 @@ if __name__ == "__main__":
         else:
             print(str(error), file=sys.stderr)
         sys.exit(1)
-        elif arguments.command == "sync":
-            run_profile(arguments.profile)
-            result = {"profile": arguments.profile, "status": "imported"}

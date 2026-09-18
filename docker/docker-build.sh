@@ -329,6 +329,8 @@ xdebug.mode=debug,profile
 xdebug.start_with_request=trigger
 ;   folder for analyzing profile dumps
 xdebug.output_dir="/tmp/xdebug"
+;   the ide listens on the docker host (docker desktop resolves this name), port 9003
+xdebug.client_host=host.docker.internal
 ;   not needed, since it is already in /etc/php/7.4/fpm/conf.d/20-xdebug.ini
 ;zend_extension=xdebug.so
 PHPINI
@@ -585,8 +587,6 @@ apt-get install -y webp
 step 'exiftool'
 apt-get install -y libimage-exiftool-perl
 
-#### speedtest cli
-step 'speedtest cli'
 #### google chrome (puppeteer, critical css, headless browser tests)
 step 'google chrome'
 curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --batch --yes --dearmor -o /usr/share/keyrings/google-chrome.gpg
@@ -594,6 +594,8 @@ printf 'deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https:/
 apt-get update
 apt-get install -y google-chrome-stable
 
+#### speedtest cli
+step 'speedtest cli'
 curl -fsSL https://packagecloud.io/ookla/speedtest-cli/gpgkey | gpg --dearmor -o /usr/share/keyrings/ookla.gpg
 printf '%s\n' 'deb [signed-by=/usr/share/keyrings/ookla.gpg] https://packagecloud.io/ookla/speedtest-cli/ubuntu/ jammy main' > /etc/apt/sources.list.d/ookla_speedtest-cli.list
 apt-get update

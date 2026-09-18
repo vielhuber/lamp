@@ -58,6 +58,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(0o600, control.SASL_PASSWORD.stat().st_mode & 0o777)
         self.assertIn(['postmap', str(control.SASL_PASSWORD)], commands)
         self.assertIn(['git', 'config', '--global', 'user.name', 'Jane Doe'], commands)
+        self.assertIn(['phpenmod', '-v', 'ALL', '-s', 'ALL', 'xdebug'], commands)
         self.assertIn(['git', 'config', '--global', 'user.email', 'jane@example.test'], commands)
         self.assertIn(['postconf', '-e', 'myhostname = mail.example.test', 'relayhost = [smtp.example.test]:587'], commands)
         self.assertEqual('Timeout 3000\nServerAdmin admin@example.test\nServerName localhost\n', control.APACHE_SETTINGS.read_text())
@@ -67,14 +68,15 @@ class SettingsTest(unittest.TestCase):
             control.apply_settings({'domain': 'example.test'})
         self.assertEqual({'user.name', 'user.email'}, {call.args[0][-1] for call in unset.call_args_list if '--unset-all' in call.args[0]})
         self.assertFalse(any(call.args[0][:2] == ['git', 'config'] for call in self.run.call_args_list))
+        self.run.reset_mock()
+        with patch.object(control.subprocess, 'run'):
+            control.apply_settings({'domain': 'example.test', 'php': {'xdebug': False}})
+        self.assertIn(['phpdismod', '-v', 'ALL', '-s', 'ALL', 'xdebug'], [call.args[0] for call in self.run.call_args_list])
         self.assertEqual('Timeout 3000\nServerAdmin webmaster@localhost\nServerName localhost\n', control.APACHE_SETTINGS.read_text())
         self.assertEqual('lamp.localdomain\n', control.MAILNAME.read_text())
         self.assertIn(['postconf', '-e', 'myhostname = lamp.localdomain', 'relayhost = '], [call.args[0] for call in self.run.call_args_list])
         self.assertFalse(control.SASL_PASSWORD.exists())
 
-
-if __name__ == '__main__':
-    unittest.main()
     def test_database_password_is_applied_to_both_servers_and_all_consumers(self):
         (self.root / 'secrets').mkdir()
         (self.root / 'secrets' / 'database-password').write_text('old\n')
@@ -93,3 +95,6 @@ if __name__ == '__main__':
         self.assertEqual({"ro'ot\n", '[client]\nuser=root\npassword="ro\'ot"\n', "*:5432:*:postgres:ro'ot\n"}, set(written.values()))
         reload.assert_called_once()
 
+
+if __name__ == '__main__':
+    unittest.main()

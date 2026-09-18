@@ -355,7 +355,9 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - selection: explicit `php` → repository root `.phprc` (one installed version, e.g. `8.3`) → `8.5`; invalid `.phprc` fails the setup
 - default cli php in a plain shell is 8.1; `exec <id>` and builds use the environment's version
 - shared `/etc/php/custom.ini` (linked into every version's cli and fpm): 4096M memory, 4800s execution time, 800M uploads, opcache with 2s revalidation, apcu, `variables_order = EGPCS`, xdebug 3 (xdebug 2 for 5.6–7.1) in `debug,profile` mode with trigger start, port 9003, profiles in `/tmp/xdebug`
-- xdebug client host defaults to `localhost` inside the container; set `xdebug.client_host` for an ide on the host (`host.docker.internal` on docker desktop)
+- xdebug is loaded in trigger mode for every php version: nothing happens until a request carries a trigger; the [xdebug helper](https://chromewebstore.google.com/detail/xdebug-helper/eadndfjplgieldjbigjakmdgkmoaaaoc) browser extension sets it per site (`Debug` → `XDEBUG_SESSION` cookie, `Profile` → `XDEBUG_PROFILE` cookie, `Trace` → `XDEBUG_TRACE` cookie, `Disable` → none), on the command line `XDEBUG_TRIGGER=1 php …` or `XDEBUG_PROFILE=1 php …` inside `exec`
+- step debugging connects to `host.docker.internal:9003`, so the ide on the docker host listens on 9003 and maps `/var/www` to the same path on the host; profiles land in `/tmp/xdebug`
+- `php.xdebug: false` in `settings.yaml` removes the module for every version and gains about 15 percent per request; triggers then do nothing
 - `uopz` is installed but disabled; jit is disabled
 - managed vhosts deny `.phps`, `.phtml`, `.phar` and dotfiles; requests with `Accept: text/event-stream` use a flushing fpm worker without gzip (sse / `mcp-server.php`)
 - apache terminates tls itself with the let's encrypt certificate, so `%{HTTPS}`, `$_SERVER['HTTPS']` and https redirects in `.htaccess` behave as in production
@@ -367,10 +369,10 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>syncdb</summary>
 
 - original profiles in `.data/syncdb/<profile>.json` (mode 600), visible in the container at `/etc/lamp/syncdb/`
+- `./lamp syncdb <profile>` runs the profile exactly as written: target `localhost:3306`, user `root` and `database.password`, database `db_name` of the static environment
 - `syncdb <profile>` inside a build or `exec <id>` copies the profile, replaces its complete `target` with the environment's database (static: the fixed `db_name` as root, or the sqlite file; dynamic: the isolated `lamp_<id>` or sqlite file), imports with php 8.5 in a temporary directory, deletes the copy; `source` and `replace` rules stay unchanged; the profile engine must match `db_engine`
 - mysql and sqlite only, no postgresql; imports use the scoped environment account, syncdb rewrites object definers to it
 - a successful import exports `DB_CONNECTION` and `DB_DATABASE` into the running build and `setup.env`; do not call it in a subshell; postgres has no import, use `psql` with the `PG*` variables
-- `./lamp syncdb <profile>` runs the profile exactly as written: target `localhost:3306`, user `root` and `database.password`, database `db_name` of the static environment
 - every executed `syncdb` imports again; an unchanged start does not run the build at all
 - syncdb `>= 2.1.3` resets object definers to the importing account and remaps `ALTER DATABASE` charset statements in routine dumps to the target database
 
