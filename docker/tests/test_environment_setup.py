@@ -59,15 +59,18 @@ class EnvironmentSetupTest(unittest.TestCase):
                 raise RuntimeError('Test build failed; output withheld.')
         return ''
 
-    def test_existing_directory_runs_cli_build_once_with_isolated_database_setup(self):
+    def test_existing_directory_is_adopted_without_build_until_build_is_requested(self):
         project = control.PROJECTS / 'existing'
         project.mkdir()
         original = project / 'original.txt'
         original.write_text('keep')
-        build = 'test -n "$DB_PASSWORD" && test "$DB_DATABASE" = lamp_abcdef012345 && printf built > build-result.txt'
+        build = 'test "$DB_PASSWORD" = rootpw && test "$DB_DATABASE" = existing && test "$DB_USERNAME" = root && printf built > build-result.txt'
         self.run.side_effect = self.execute_build
-        self.invoke('add', '--id', self.identity, '--subdomain', 'existing', '--build', build)
+        self.invoke('add', '--id', self.identity, '--subdomain', 'existing', '--db-name', 'existing', '--db-engine', 'mysql', '--build', build)
         environment = control.load_environment(self.identity)
+        self.assertFalse((project / 'build-result.txt').exists())
+        self.assertEqual('ready', environment['status'])
+        self.invoke('build', self.identity)
         self.assertEqual('built', (project / 'build-result.txt').read_text())
         self.assertFalse(environment['project_owned'])
         self.assertTrue(environment['databases_ready'])
@@ -91,19 +94,19 @@ class EnvironmentSetupTest(unittest.TestCase):
         control.write_desired([value], None)
         self.run.side_effect = self.execute_build
         control.reconcile(self.settings, control.desired_state(control.read_desired()[0]))
-        self.assertEqual('built', (project / 'build-result.txt').read_text())
-        self.assertFalse(any(call.args[0][0] in ('git', 'chown') for call in self.run.call_args_list))
-        self.run.reset_mock()
-        control.reconcile(self.settings, control.desired_state(control.read_desired()[0]))
-        self.assertFalse(any(call.args[0][0] == 'bash' for call in self.run.call_args_list))
+        self.assertFalse((project / 'build-result.txt').exists())
+        self.assertFalse(any(call.args[0][0] in ('git', 'chown', 'bash') for call in self.run.call_args_list))
         script.write_text('printf changed > build-result.txt\n')
         control.reconcile(self.settings, control.desired_state(control.read_desired()[0]))
+        self.assertFalse((project / 'build-result.txt').exists())
+        identity = control.environments()[0]['id']
+        self.invoke('build', identity)
         self.assertEqual('changed', (project / 'build-result.txt').read_text())
+        self.assertEqual('ready', control.load_environment(identity)['status'])
 
-    def test_failed_existing_project_build_retries_without_recreating_databases(self):
-        project = control.PROJECTS / 'existing'
-        project.mkdir()
-        value = control.validate_specification({'subdomain': 'existing', 'build': 'exit 1'})
+    def test_failed_project_build_retries_without_recreating_databases(self):
+        project = control.PROJECTS / 'created'
+        value = control.validate_specification({'subdomain': 'created', 'build': 'exit 1'})
         self.run.side_effect = self.execute_build
         with self.assertRaisesRegex(RuntimeError, 'Test build failed'):
             control.reconcile(self.settings, {self.identity: value})
@@ -129,9 +132,13 @@ class EnvironmentSetupTest(unittest.TestCase):
                     control.reconcile(self.settings, {})
                 else:
                     control.remove(self.identity)
-                self.assertEqual('built', (project / 'keep.txt').read_text())
+                if adopted:
+                    self.assertFalse((project / 'keep.txt').exists())
+                else:
+                    self.assertEqual('built', (project / 'keep.txt').read_text())
+                self.assertTrue(project.is_dir())
                 self.assertEqual(0, len(control.environments()))
-                self.assertEqual(2, sum('DROP DATABASE' in call.kwargs.get('input', '') for call in self.run.call_args_list))
+                self.assertEqual(0, sum('DROP DATABASE' in call.kwargs.get('input', '') for call in self.run.call_args_list))
 
     def test_dynamic_directories_are_deleted_whether_created_or_adopted(self):
         for adopted in (True, False):
@@ -199,9 +206,46 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertEqual('built', (project / 'build-result.txt').read_text())
         self.assertFalse(any(call.args[0][0] in ('mysql', 'psql') for call in self.run.call_args_list))
 
+    def test_static_databases_are_fixed_never_dropped_and_imported_with_root(self):
+        (control.PROJECTS / 'shop').mkdir()
+        self.assertEqual('shop', json.loads(self.invoke('add', '--subdomain', 'shop', '--db-name', 'shop', '--db-engine', 'postgres'))['database'])
+        environment = control.environments()[0]
+        inputs = ''.join(call.kwargs.get('input', '') for call in self.run.call_args_list)
+        self.assertIn("SELECT datname FROM pg_database WHERE datname='shop';", inputs)
+        self.assertIn('CREATE DATABASE "shop";', inputs)
+        self.assertNotIn('lamp_', inputs)
+        setup = Path(environment['setup_environment']).read_text()
+        self.assertIn("export DB_CONNECTION=pgsql\n", setup)
+        self.assertIn("export PGDATABASE=shop\n", setup)
+        self.assertIn("export PGUSER=postgres\n", setup)
+        self.assertIn("export DB_PASSWORD=rootpw\n", setup)
+        (control.CONFIGURATION / 'syncdb').mkdir()
+        (control.CONFIGURATION / 'syncdb' / 'shop.json').write_text(json.dumps({'engine': 'mysql', 'source': {}}))
+        with patch.object(control, 'run_sync') as sync, self.assertRaisesRegex(ValueError, 'profile is for mysql'):
+            control.sync_database(environment, 'shop')
+        sync.assert_not_called()
+        self.run.reset_mock()
+        control.remove(environment['id'])
+        self.assertNotIn('DROP DATABASE', ''.join(call.kwargs.get('input', '') for call in self.run.call_args_list))
+        (control.PROJECTS / 'blog').mkdir()
+        self.invoke('add', '--subdomain', 'blog', '--db-name', 'blog', '--db-engine', 'mysql')
+        environment = control.environments()[0]
+        (control.CONFIGURATION / 'syncdb' / 'blog.json').write_text(json.dumps({'engine': 'mysql', 'source': {}}))
+        with patch.object(control, 'run_sync') as sync:
+            control.sync_database(environment, 'blog')
+        self.assertEqual({'host': 'localhost', 'port': '3306', 'database': 'blog', 'username': 'root', 'password': 'rootpw',
+                          'ssh': False, 'cmd': 'mysql', 'sql_log_bin': False}, sync.call_args.args[1]['target'])
+        for arguments in (['--subdomain', 'x', '--db-name', 'x'], ['--db-name', 'x', '--db-engine', 'mysql'], ['--subdomain', 'x', '--db-name', 'a b', '--db-engine', 'mysql']):
+            with self.subTest(arguments=arguments), self.assertRaises((ValueError, SystemExit)):
+                self.invoke('add', *arguments)
+        (control.PROJECTS / 'plain').mkdir()
+        self.invoke('add', '--subdomain', 'plain')
+        plain = [item for item in control.environments() if item['subdomain'] == 'plain'][0]
+        self.assertNotIn('DB_', Path(plain['setup_environment']).read_text())
+        self.assertIsNone(plain['database'])
+
     def test_build_output_is_written_to_a_private_log_named_in_the_failure(self):
         project = control.PROJECTS / 'logged'
-        project.mkdir()
         value = control.validate_specification({'subdomain': 'logged', 'build': 'echo progress; echo problem >&2; exit 3'})
         self.run.side_effect = self.execute_build
         with self.assertRaisesRegex(RuntimeError, 'Build log: .*/environments/abcdef012345/build.log'):

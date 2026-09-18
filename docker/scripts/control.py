@@ -835,7 +835,18 @@ def show(environment):
             ("password", "build", "build_hash", "applied", "checkout", "syncdb", "synced_profile", "databases_ready", "mysql_owned", "postgres_owned", "project_identity")}
 
 
-def add(arguments, settings, identity, current=None):
+def ensure_connector(settings):
+    if not connector(settings):
+        raise ValueError("Environments require the tunnel credentials; run lamp cloudflare-setup.")
+    run(["supervisorctl", "reread"])
+    run(["supervisorctl", "update"])
+    run(["curl", "--noproxy", "*", "--fail", "--silent", "--retry", "30", "--retry-connrefused",
+         "--retry-delay", "1", "--max-time", "2", "--retry-max-time", "60", "http://127.0.0.1:20246/ready"])
+
+
+def add(arguments, settings, identity, current=None, *, force_build=False, reason="creating", batch=None):
+    # batch collects deferred work of a reconcile run: one apache reload and one php-fpm restart per version at the end,
+    # access checks and the connector are handled once by the caller.
     desired = validate_specification({key: getattr(arguments, key) for key in ("git", *ENVIRONMENT_DEFAULTS)})
     project = project_path(identity, desired)
     if current:
@@ -844,16 +855,15 @@ def add(arguments, settings, identity, current=None):
             raise ValueError("The registered project directory is missing; existing files will not be recreated automatically.")
     elif project.exists() and not project.is_dir():
         raise ValueError("The project target exists but is not a directory.")
-    sync_visibility(settings, {identity: desired}, identities={identity}, publish=False)
+    if batch is None:
+        sync_visibility(settings, {identity: desired}, identities={identity}, publish=False)
     project_owned = current.get("project_owned", False) if current else not project.exists()
     build, build_hash = resolve_build(desired)
     ensure_vpn(desired["vpn"])
-    if not connector(settings):
-        raise ValueError("Environments require .data/cloudflare/cloudflared-credentials.json and existing wildcard DNS.")
-    run(["supervisorctl", "reread"])
-    run(["supervisorctl", "update"])
-    run(["curl", "--noproxy", "*", "--fail", "--silent", "--retry", "30", "--retry-connrefused",
-         "--retry-delay", "1", "--max-time", "2", "--retry-max-time", "60", "http://127.0.0.1:20246/ready"])
+    if batch is None or not batch.get("connected"):
+        ensure_connector(settings)
+        if batch is not None:
+            batch["connected"] = True
     hostname = environment_hostname(identity, desired, settings)
     url = environment_url(identity, desired, settings)
     directory = STATE / "environments" / identity
@@ -891,11 +901,15 @@ def add(arguments, settings, identity, current=None):
     try:
         if current:
             (ENABLED / ("lamp-" + identity + ".conf")).unlink(missing_ok=True)
-            reload_apache()
+            if batch is None:
+                reload_apache()
+            else:
+                batch["reload"] = True
         os.umask(0o022)
-        print(f"Applying environment {identity}.", file=sys.stderr)
+        print(f"{hostname} [{identity}] {project}: {reason}", file=sys.stderr)
         git_environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": "ssh -o BatchMode=yes"}
         if project_owned and arguments.git is not None and not (project / ".git").exists():
+            print(f"{hostname} [{identity}] {project}: cloning {arguments.git}", file=sys.stderr)
             clone = ["git", "clone"]
             branch = arguments.branch
             if branch and getattr(arguments, "base_branch", None):
@@ -934,9 +948,10 @@ def add(arguments, settings, identity, current=None):
         save_environment(environment)
         os.umask(0o077)
         variables = write_setup(environment)
-        if build is not None:
+        # Adopted directories are never built automatically; lamp build <id> is the explicit way.
+        if build is not None and (project_owned or force_build):
             log = directory / "build.log"
-            print(f"Running project setup/build; output is written to {log}.", file=sys.stderr)
+            print(f"{hostname} [{identity}] {project}: building, log {log}", file=sys.stderr)
             with log.open("w") as handle:
                 os.umask(0o022)
                 try:
@@ -985,10 +1000,13 @@ def add(arguments, settings, identity, current=None):
         environment["status"] = "failed"
         save_environment(environment)
         (ENABLED / ("lamp-" + identity + ".conf")).unlink(missing_ok=True)
-        try:
-            reload_apache()
-        except RuntimeError:
-            pass
+        if batch is None:
+            try:
+                reload_apache()
+            except RuntimeError:
+                pass
+        else:
+            batch["reload"] = True
         print(f"Environment {identity} failed; correct its YAML settings and restart, or remove it.", file=sys.stderr)
         raise
     return show(environment)
