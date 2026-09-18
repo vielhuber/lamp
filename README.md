@@ -38,9 +38,9 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `mkdir lamp && cd lamp`
 - `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init` (copies `lamp` and `docker/docker-compose.yml` out of the image)
-- `./lamp docker-setup` (creates `.data` with a commented `config.yaml`, an empty `environments.yaml`, example files for syncdb, build scripts and the access service token, and `docker/docker-compose.override.yml` with the projects mount; never overwrites)
+- `./lamp docker-setup` (creates `.data` with a commented `config/settings.yaml`, a `config/env.yaml` that lists phpmyadmin, example files for syncdb and build scripts, and `docker/docker-compose.override.yml` with the projects mount; never overwrites)
 - optional: change the host side of the projects mount in `docker/docker-compose.override.yml`; the container side stays `/var/www`
-- set `domain` in `.data/config.yaml`
+- set `domain` in `.data/config/settings.yaml`
 - put ssh keys into `.data/ssh/`, syncdb profiles into `.data/syncdb/`, build scripts into `.data/build/`
 - optional: `sudo ln -s "$(pwd -P)/lamp" /usr/local/bin/lamp`
 
@@ -228,23 +228,21 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>data layout</summary>
 
-| path                      | contents                                                                          | survives `docker-reset` |
-| ------------------------- | --------------------------------------------------------------------------------- | ---------------- |
-| `.data/config.yaml`       | `domain`, optional `git`, `apache`, `postfix`, `vpn` (mode 600)                   | yes              |
-| `docker/docker-compose.override.yml` | host-specific: projects mount, extra mounts and ports (gitignored)    | yes              |
-| `.data/environments.yaml` | desired environments (mode 600)                                                   | yes              |
-| `.data/build/*.sh`        | shared repository build scripts (mode 600)                                        | yes              |
-| `.data/syncdb/*.json`     | original syncdb profiles (mode 600)                                               | yes              |
-| `.data/ssh/`              | container `/root/.ssh` (keys, config, known_hosts)                                | yes              |
-| `.data/cloudflare/`       | tunnel credentials, access service token, management api token                    | yes              |
-| `.data/cliproxyapi/`      | cliproxyapi config, oauth auth files, logs                                        | yes              |
-| `.data/ca/`               | local ca for direct-origin https                                                  | yes              |
-| `.data/vpn/`              | openvpn / wireguard profiles                                                      | yes              |
-| `.logs/`                  | host-side command logs                                                            | yes              |
-| `/var/www`                | project checkouts; host directory set in `docker/docker-compose.override.yml`     | yes              |
-| compose volumes           | mysql, postgresql, redis, apache sites, mail, certificates, `/var/lib/lamp` state | **no**           |
+| path                                 | contents                                                                          | survives `docker-reset` |
+| ------------------------------------ | --------------------------------------------------------------------------------- | ----------------------- |
+| `.data/config/settings.yaml`         | `domain`, optional `git`, `apache`, `postfix`, `vpn` (mode 600)                   | yes                     |
+| `docker/docker-compose.override.yml` | host-specific: projects mount, extra mounts and ports (gitignored)                | yes                     |
+| `.data/config/env.yaml`              | desired environments (mode 600)                                                   | yes                     |
+| `.data/build/*.sh`                   | shared repository build scripts (mode 600)                                        | yes                     |
+| `.data/syncdb/*.json`                | original syncdb profiles (mode 600)                                               | yes                     |
+| `.data/ssh/`                         | container `/root/.ssh` (keys, config, known_hosts)                                | yes                     |
+| `.data/cloudflare/`                  | tunnel credentials and access service token, written by `cloudflare-setup`        | yes                     |
+| `.data/vpn/`                         | openvpn / wireguard profiles                                                      | yes                     |
+| `.logs/`                             | host-side command logs                                                            | yes                     |
+| `/var/www`                           | project checkouts; host directory set in `docker/docker-compose.override.yml`     | yes                     |
+| compose volumes                      | mysql, postgresql, redis, apache sites, mail, certificates, `/var/lib/lamp` state | **no**                  |
 
-- `.data` is mounted at `/etc/lamp`, `.data/ssh` at `/root/.ssh`, `.data/cliproxyapi` at `/var/lib/lamp/cliproxyapi`
+- `.data` is mounted at `/etc/lamp`, `.data/ssh` at `/root/.ssh`
 - `.data` and `.logs` are excluded from git and from the image
 - back up `.data` and database-consistent dumps separately; `docker-reset` is not an update that preserves environments
 - initial mysql root / postgres password: `/var/lib/lamp/secrets/database-password` in the state volume, generated on first start; set your own before the first database initialization with `docker compose -f docker/docker-compose.yml run --rm --no-deps app bash -c 'umask 077; mkdir -p /var/lib/lamp/secrets; read -rsp "password: " p; printf "%s\n" "$p" > /var/lib/lamp/secrets/database-password'`
@@ -282,28 +280,33 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - ids are runtime identifiers reported by `add`, `show` and `list`; `add --id` reuses one and is idempotent: identical settings return the existing environment, different settings fail
 - a file from the previous id-keyed format is converted on first use; its dynamic entries are dropped from the file, the environments themselves stay
 
-- `./lamp docker-setup` writes an empty `.data/environments.yaml` with a commented example entry; the first `add` or reconciliation rewrites the file without comments
+- `./lamp docker-setup` writes `.data/config/env.yaml` with a commented example entry and the phpmyadmin entry below; the first `add` or reconciliation rewrites the file without comments, one blank line between entries
+- phpmyadmin: `https://github.com/phpmyadmin/phpmyadmin.git` on branch `STABLE` as subdomain `phpmyadmin`, private, so cloudflare access protects it like every other environment; its build script `.data/build/github.com-phpmyadmin-phpmyadmin.sh` runs composer and yarn and writes `config.inc.php` with automatic root login from the container's database password; delete the entry if you do not want it
 
-| key             | default | meaning                                                                                        |
-| --------------- | ------- | ---------------------------------------------------------------------------------------------- |
-| `git`           | null    | ssh `git@host:path` or credential-free https url; null for an empty environment                |
-| `branch`        | null    | null selects the repository default branch                                                     |
-| `subdomain`     | required | one lowercase label or a list; first label is the primary host and the static project path    |
-| `aliases`       | omitted | suffixes: `<primary>-<suffix>.<domain>` share the same checkout and databases                  |
-| `directory`     | omitted | folder under `/var/www` when it differs from the first subdomain, e.g. `aistats` for `ai`; may be nested like `tourconcept/new` |
-| `webroot`       | null    | directory relative to the checkout; null picks `public/` or `web/` with `index.php`, else root |
-| `php`           | omitted | explicit version; omitted reads the repository root `.phprc`, else `8.5`                       |
-| `vpn`           | null    | required tunnel name from `config.yaml`                                                        |
-| `proxy_port`    | null    | forward the vhost to `http://127.0.0.1:<port>/` (`ProxyPreserveHost On`)                       |
-| `proxy_exclude` | null    | one path prefix that stays on php, e.g. `/admin`                                               |
-| `visibility`    | private | `public` adds a cloudflare access bypass for exactly this environment's hostnames              |
-| `build`         | omitted | inline build; omitted uses `.data/build/<host>-<owner>-<repo>.sh` if present; `':'` for no-op  |
+| key             | default  | meaning                                                                                                                         |
+| --------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `git`           | null     | ssh `git@host:path` or credential-free https url; null for an empty environment                                                 |
+| `branch`        | null     | null selects the repository default branch                                                                                      |
+| `subdomain`     | required | one lowercase label or a list; first label is the primary host and the static project path                                      |
+| `aliases`       | omitted  | suffixes: `<primary>-<suffix>.<domain>` share the same checkout and databases                                                   |
+| `directory`     | first subdomain | folder under `/var/www`; written explicitly, may be nested like `tourconcept/new`                          |
+| `db_name`       | null     | fixed database of a static environment; null creates nothing                                                  |
+| `db_engine`     | null     | `mysql`, `postgres` or `sqlite`; required with `db_name`; only mysql and sqlite can be imported with `syncdb`  |
+| `webroot`       | null     | directory relative to the checkout; null picks `public/` or `web/` with `index.php`, else root                                  |
+| `php`           | omitted  | explicit version; omitted reads the repository root `.phprc`, else `8.5`                                                        |
+| `vpn`           | null     | required tunnel name from `settings.yaml`                                                                                       |
+| `proxy_port`    | null     | forward the vhost to `http://127.0.0.1:<port>/` (`ProxyPreserveHost On`)                                                        |
+| `proxy_exclude` | null     | one path prefix that stays on php, e.g. `/admin`                                                                                |
+| `visibility`    | private  | `public` adds a cloudflare access bypass for exactly this environment's hostnames                                               |
+| `build`         | omitted  | inline build; omitted uses `.data/build/<host>-<owner>-<repo>.sh` if present; `':'` for no-op                                   |
 
 - project path: `/var/www/<directory or first subdomain>` for static environments, `/var/www/_environments/<id>` for dynamic ones; the same path on host and container
-- existing directories are adopted without clone, pull, checkout or chown; missing directories are cloned
+- existing directories are adopted without clone, pull, checkout, chown or build; missing directories are cloned and built
 - `remove` deletes the project directory only for dynamic environments; static directories always stay
-- hostnames: `<subdomain-or-id>.<domain>`; every hostname must be unique; `phpmyadmin` is reserved; no nested subdomains
-- reconciliation: entries without a matching environment are provisioned, including database initialization, imports and the build; environments without a matching entry are removed; a changed build script reruns the build of every environment using it; `[]` removes all static environments, an empty file is invalid
+- databases: a static environment gets exactly one fixed database `db_name` on `db_engine`, created when missing and never dropped or altered by lamp, reachable as `root` (mysql) or `postgres` (postgres) with the password from `/var/lib/lamp/secrets/database-password`; a `sqlite` database is the file `/var/lib/lamp/environments/<id>/data/<db_name>.sqlite`; dynamic environments get isolated `lamp_<id>` databases on mysql and postgresql with their own account, dropped on `remove`
+- mysql and postgresql are published on `127.0.0.1:3306` and `127.0.0.1:5432` of the host for database tools; the old host services must be stopped
+- hostnames: `<subdomain-or-id>.<domain>`; every hostname must be unique; no nested subdomains
+- reconciliation: entries without a matching environment are provisioned, including database initialization, imports and the build; environments without a matching entry are removed; a changed build script reruns the build of every cloned environment using it; `[]` removes all static environments, an empty file is invalid; one pass does the access checks once at start and end, one apache reload and one php-fpm restart per version at the end
 - `lamp branch <id> <branch>` switches the checkout and updates the entry's `branch` in the file, so the environment keeps matching
 - failed environments keep status `failed` and are not served; fix the yaml and `restart`, or `build <id>`, or `remove`
 - `docker-reset` deletes the runtime state: static environments are re-registered from the file on the next `start`, dynamic environments are gone and their directories under `/var/www/_environments/` become orphans
@@ -464,32 +467,9 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <details>
 
-<summary>local access</summary>
-
-- http `127.0.0.1:18080`, https `127.0.0.1:8443` (direct origin, bypasses cloudflare; for diagnostics only)
-- trust `.data/ca/certificate.crt` and add `127.0.0.1 <hostname>` to the browser machine's hosts file; remove the override for normal access through cloudflare
-- phpmyadmin: `https://phpmyadmin.<domain>:8443` with automatic admin login; local ca, hosts entry, no tunnel vhost
-- environment certificates last one year and are renewed on container start when fewer than 30 days remain
-- no database, redis, ssh or docker ports are published; `docker/docker-compose.override.yml` (gitignored) is the place for extra ports and read-only bind mounts (`create_host_path: false`)
-
-</details>
-
-<details>
-
-<summary>cliproxyapi</summary>
-
-- started by supervisor when `.data/cliproxyapi/config.yaml` exists; use `auth-dir: /var/lib/lamp/cliproxyapi/auth`
-- provider logins are documented in the [aistats readme](https://github.com/vielhuber/aistats); run them inside `./lamp ssh`; antigravity's callback port `51121` is not published
-- expose through a project: `subdomain: ai`, `directory: aistats`, `proxy_port: 8317`, `proxy_exclude: /admin`
-- stop any host cliproxyapi unit before running the container instance against the same oauth accounts
-
-</details>
-
-<details>
-
 <summary>vpn</summary>
 
-- the `vpn` section of `.data/config.yaml` lists tunnels with `name`, `type` (`openvpn` or `wireguard`), `config`, optional `username` / `password`, `routes` and `hosts`; `./lamp docker-setup` leaves a commented example in the file
+- the `vpn` section of `.data/config/settings.yaml` lists tunnels with `name`, `type` (`openvpn` or `wireguard`), `config`, optional `username` / `password`, `routes` and `hosts`; `./lamp docker-setup` leaves a commented example in the file
 
 - profiles in `.data/vpn/` (mode 600); names: lowercase, max twelve characters, letter first
 - `./lamp restart` applies changes; `./lamp exec 'supervisorctl start|stop|status vpn-office'` controls a tunnel

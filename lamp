@@ -7,11 +7,12 @@ if (( $# )); then shift; fi
 json=false
 if [[ "$command" = status || "$command" = version ]] && [[ "${1:-}" = --json ]]; then json=true; shift; fi
 if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
-    printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build <id>|list [--search <term>]|show <id>|branch|exec [<id>] "<command>"|curl|access <id>|remove <id>|ssh|docker-build|docker-setup|docker-reset' \
-        'docker-setup creates .data with a commented config.yaml, an empty environments.yaml, example files for syncdb, build scripts and the Access service token, and docker/docker-compose.override.yml with the projects mount; existing files are kept.' \
+    printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build <id>|list [--search <term>]|show <id>|branch|exec [<id>] "<command>"|curl|access <id>|remove <id>|ssh|cloudflare-setup|docker-build|docker-setup|docker-reset' \
+        'docker-setup creates .data with a commented config/settings.yaml, a config/env.yaml with phpmyadmin, example files for syncdb and build scripts, and docker/docker-compose.override.yml with the projects mount; existing files are kept.' \
+        'cloudflare-setup creates or verifies the tunnel, the wildcard dns record, the Access application with its policies, the service token and the cache bypass rule with cloudflare.token from settings.yaml.' \
         'build <id> reruns the configured build of an existing environment inside the running container; docker-build rebuilds the image without layer cache.' \
         'list --search <term> returns only environments whose values contain the term (case-insensitive).' \
-        'add [--git <repository>] [--id <12-hex-id>] [--branch <branch>] [--base-branch <branch>] [--php <version>] [--vpn <profile>] [--build <command>] [--subdomain <label>] [--directory <name>] [--alias <suffix> ...] [--webroot <directory>] [--proxy-port <port>] [--proxy-exclude <path>] [--visibility private|public]' \
+        'add [--git <repository>] [--id <12-hex-id>] [--branch <branch>] [--base-branch <branch>] [--php <version>] [--vpn <profile>] [--build <command>] [--subdomain <label>] [--directory <name>] [--db-name <name>] [--db-engine mysql|postgres|sqlite] [--alias <suffix> ...] [--webroot <directory>] [--proxy-port <port>] [--proxy-exclude <path>] [--visibility private|public]' \
         'exec [<id>] "<command>": with an id inside that environment (project directory, its php, database variables, authenticated curl), without an id as root in the container.' \
         'branch <id> <branch> [--base <branch>] [--operation switch|rename]' \
         'curl <id> -- <curl arguments>; access <id> (secret JSON for trusted integrations only)' \
@@ -97,7 +98,19 @@ PRESET
 #   proxy_exclude: null
 #   visibility: private
 #   build: 'syncdb project-production-local && composer install'
-[]
+
+# phpmyadmin with automatic root login behind cloudflare access; built by .data/build/github.com-phpmyadmin-phpmyadmin.sh
+- git: https://github.com/phpmyadmin/phpmyadmin.git
+  branch: STABLE
+  subdomain: phpmyadmin
+  directory: phpmyadmin
+  db_name: null
+  db_engine: null
+  webroot: null
+  vpn: null
+  proxy_port: null
+  proxy_exclude: null
+  visibility: private
 PRESET
     preset "$data/syncdb/example-production-local.json" 600 <<'PRESET'
 {
@@ -149,9 +162,24 @@ composer install --no-interaction
 npm install
 npm run prod
 PRESET
-    preset "$data/cloudflare/cloudflare-service-token.yaml.example" 600 <<'PRESET'
-CF-Access-Client-Id: '<CLIENT_ID>'
-CF-Access-Client-Secret: '<CLIENT_SECRET>'
+    preset "$data/build/github.com-phpmyadmin-phpmyadmin.sh" 600 <<'PRESET'
+#!/usr/bin/env bash
+set -euo pipefail
+composer install --no-dev --no-interaction
+yarn install --frozen-lockfile --non-interactive
+mkdir -p tmp
+php <<'PHP' > config.inc.php
+<?php
+$password = rtrim(file_get_contents('/var/lib/lamp/secrets/database-password'), "\r\n");
+echo "<?php\n";
+echo '$cfg[\'blowfish_secret\'] = ' . var_export(bin2hex(random_bytes(16)), true) . ";\n";
+echo '$cfg[\'Servers\'][1][\'auth_type\'] = \'config\';' . "\n";
+echo '$cfg[\'Servers\'][1][\'host\'] = \'localhost\';' . "\n";
+echo '$cfg[\'Servers\'][1][\'user\'] = \'root\';' . "\n";
+echo '$cfg[\'Servers\'][1][\'password\'] = ' . var_export($password, true) . ";\n";
+echo '$cfg[\'ExecTimeLimit\'] = 6000;' . "\n";
+PHP
+chmod 600 config.inc.php
 PRESET
     preset "$directory/docker/docker-compose.override.yml" 644 <<'PRESET'
 # host-specific settings, ignored by git.

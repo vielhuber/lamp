@@ -117,8 +117,8 @@ if [[ "$(< "$postgres_data/PG_VERSION")" != 18 ]]; then
     exit 1
 fi
 
-#### phpmyadmin
-# Credentials and cookie keys are written at runtime, never included in image layers.
+#### database client credentials
+# Written at runtime, never included in image layers.
 php8.5 <<'PHP'
 <?php
 declare(strict_types=1);
@@ -127,16 +127,6 @@ umask(0077);
 file_put_contents('/root/.my.cnf', "[client]\nuser=root\npassword=" . json_encode($password, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n");
 $pgPassword = str_replace(['\\', ':'], ['\\\\', '\\:'], $password);
 file_put_contents('/root/.pgpass', '*:5432:*:postgres:' . $pgPassword . "\n");
-if (!is_file('/var/lib/lamp/phpmyadmin/config.inc.php')) {
-    $configuration = "<?php\ndeclare(strict_types=1);\n";
-    $configuration .= '$cfg[\'blowfish_secret\'] = ' . var_export(bin2hex(random_bytes(16)), true) . ";\n";
-    $configuration .= '$cfg[\'Servers\'][1][\'auth_type\'] = \'config\';' . "\n";
-    $configuration .= '$cfg[\'Servers\'][1][\'user\'] = \'root\';' . "\n";
-    $configuration .= '$cfg[\'Servers\'][1][\'password\'] = ' . var_export($password, true) . ";\n";
-    $configuration .= '$cfg[\'Servers\'][1][\'host\'] = \'localhost\';' . "\n";
-    $configuration .= '$cfg[\'ExecTimeLimit\'] = 6000;' . "\n";
-    file_put_contents('/var/lib/lamp/phpmyadmin/config.inc.php', $configuration);
-}
 PHP
 touch /var/log/php-error.log
 chmod 666 /var/log/php-error.log

@@ -585,14 +585,6 @@ apt-get install -y webp
 step 'exiftool'
 apt-get install -y libimage-exiftool-perl
 
-#### phpmyadmin
-step 'phpmyadmin'
-php8.5 /usr/local/bin/composer create-project --no-interaction --no-dev phpmyadmin/phpmyadmin /opt/phpmyadmin
-php8.5 /usr/local/bin/composer --working-dir=/opt/phpmyadmin update \
-    paragonie/sodium_compat symfony/cache symfony/process twig/twig \
-    --with-dependencies --no-dev --no-interaction
-ln -s /var/lib/lamp/phpmyadmin/config.inc.php /opt/phpmyadmin/config.inc.php
-
 #### speedtest cli
 step 'speedtest cli'
 curl -fsSL https://packagecloud.io/ookla/speedtest-cli/gpgkey | gpg --dearmor -o /usr/share/keyrings/ookla.gpg

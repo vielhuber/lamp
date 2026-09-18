@@ -131,12 +131,12 @@ class VisibilityTest(unittest.TestCase):
             self.current = [environment]
             self.value['subdomain'] = labels
             with patch.object(control, 'sync_visibility'), patch.object(control, 'save_environment') as save, \
-                 patch.object(control, 'certificate') as certificate, patch.object(control, 'vhost'), \
+                 patch.object(control, 'vhost') as vhost, \
                  patch.object(control, 'add', side_effect=AssertionError('Unexpected build')), \
                  patch.object(control, 'database', side_effect=AssertionError('Unexpected database operation')):
                 control.reconcile(self.settings, self.desired)
             expected = control.environment_hostnames(self.identity, self.value, self.settings)
-            self.assertEqual(int(expected != environment['hostnames']), certificate.call_count)
+            self.assertEqual(int(expected != environment['hostnames']), vhost.call_count)
             environment = copy.deepcopy(save.call_args.args[0])
             self.assertEqual(expected, environment['hostnames'])
             self.assertEqual(labels, environment['subdomain'])
@@ -284,13 +284,12 @@ class VisibilityTest(unittest.TestCase):
         self.current = [environment]
         self.value['aliases'] = ['shop']
         with patch.object(control, 'sync_visibility'), patch.object(control, 'save_environment') as save, \
-             patch.object(control, 'certificate') as certificate, patch.object(control, 'vhost') as vhost, \
+             patch.object(control, 'vhost') as vhost, \
              patch.object(control, 'add', side_effect=AssertionError('Unexpected build')), \
              patch.object(control, 'database', side_effect=AssertionError('Unexpected database operation')):
             control.reconcile(self.settings, self.desired)
         self.assertEqual(['demo.example.test', 'demo-shop.example.test'], save.call_args.args[0]['hostnames'])
         self.assertEqual(['shop'], save.call_args.args[0]['applied']['aliases'])
-        certificate.assert_called_once()
         vhost.assert_called_once()
 
     def test_private_probe_requires_cloudflare_login_not_an_origin_denial(self):

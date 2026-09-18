@@ -254,8 +254,6 @@ def subdomain_labels(value):
                    for label in labels)
             or len(set(labels)) != len(labels)):
         raise ValueError("subdomain must be a lowercase DNS label, a nonempty list of unique lowercase DNS labels or null.")
-    if "phpmyadmin" in labels:
-        raise ValueError("The phpMyAdmin subdomain is reserved.")
     return labels
 
 
@@ -425,32 +423,19 @@ def reconcile(settings, desired, *, validate_only=False):
         reload_apache()
     for identity in current.keys() - desired.keys():
         remove(identity)
-    for identity, value in desired.items():
-        environment = current.get(identity)
-        applied = {**specification(environment), "visibility": value["visibility"],
-                   "subdomain": value["subdomain"], "aliases": value["aliases"]} if environment else None
-        if (environment is None or environment["status"] != "ready" or applied != value
-                or environment["url"] != environment_url(identity, value, settings)
-                or environment["php"] != resolve_php(environment_project(environment), value["php"])
-                or ((environment.get("project_owned") or environment.get("setup_environment"))
-                    and environment.get("build_hash") != resolve_build(value)[1])):
-            add(argparse.Namespace(**value), settings, identity, environment)
-        elif environment.get("visibility") != value["visibility"] or specification(environment) != value:
-            if hostnames(environment) != environment_hostnames(identity, value, settings):
-                environment["aliases"] = value["aliases"]
-                environment["hostnames"] = environment_hostnames(identity, value, settings)
-                try:
-                    certificate(environment)
-                    vhost(environment)
-                    reload_apache()
-                except (OSError, RuntimeError):
-                    (ENABLED / ("lamp-" + identity + ".conf")).unlink(missing_ok=True)
-                    reload_apache()
-                    raise
-            environment["subdomain"] = value["subdomain"]
-            environment["visibility"] = value["visibility"]
-            environment["applied"] = value
-            save_environment(environment)
+    batch = {"php": set(), "reload": False, "connected": False}
+    try:
+        for identity, value in desired.items():
+            environment = current.get(identity)
+            if not subdomain_labels(value) and environment is not None:
+                # Existing dynamic environments are kept as they are; only add --id, build <id> and remove <id> touch them.
+                continue
+            apply_entry(settings, identity, value, environment, batch)
+    finally:
+        for version in sorted(batch["php"]):
+            run(["supervisorctl", "restart", "php" + version + "-fpm"])
+        if batch["reload"]:
+            reload_apache()
     sync_visibility(settings, desired)
 
 
@@ -742,22 +727,7 @@ def sync_database(environment, profile_name):
         destination.unlink(missing_ok=True)
 
 
-def certificate(environment):
-    directory = STATE / "environments" / environment["id"]
-    ca = CONFIGURATION / "ca"
-    hostname = environment["hostname"]
-    run(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", str(directory / "tls.key"),
-         "-out", str(directory / "tls.csr"), "-subj", "/CN=" + hostname])
-    extensions = directory / "tls.ext"
-    names = ",".join("DNS:" + host for host in hostnames(environment))
-    extensions.write_text(f"subjectAltName={names}\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n")
-    run(["openssl", "x509", "-req", "-in", str(directory / "tls.csr"), "-CA", str(ca / "certificate.crt"),
-         "-CAkey", str(ca / "private.key"), "-set_serial", "0x" + secrets.token_hex(16), "-days", "365",
-         "-sha256", "-extfile", str(extensions), "-out", str(directory / "tls.crt")])
-
-
 def vhost(environment):
-    directory = STATE / "environments" / environment["id"]
     hostname = environment["hostname"]
     root = environment["document_root"]
     aliases = "    ServerAlias " + " ".join(hostnames(environment)[1:]) + "\n" if len(hostnames(environment)) > 1 else ""
@@ -794,20 +764,7 @@ def vhost(environment):
             settings += f'    ProxyPass "{environment["proxy_exclude"]}" "!"\n'
         upstream = f'http://127.0.0.1:{environment["proxy_port"]}/'
         settings += f'    ProxyPass "/" "{upstream}"\n    ProxyPassReverse "/" "{upstream}"\n'
-    redirect = ("    RewriteEngine On\n    RewriteCond %{HTTP_HOST} ^(" + "|".join(re.escape(host) for host in hostnames(environment))
-                + ")(?::[0-9]+)?$ [NC]\n    RewriteRule ^ https://%1%{REQUEST_URI} [R=301,L,NE]\n"
-                if aliases else f"    Redirect / {environment['url']}/\n")
-    value = f'''<VirtualHost *:80>
-    ServerName {hostname}
-{aliases}{redirect}</VirtualHost>
-<VirtualHost *:443>
-{settings}    SSLEngine on
-    SSLCertificateFile "{directory}/tls.crt"
-    SSLCertificateKeyFile "{directory}/tls.key"
-</VirtualHost>
-'''
-    if environment["id"] != "phpmyadmin":
-        value += f'''<VirtualHost 127.0.0.1:8081>
+    value = f'''<VirtualHost 127.0.0.1:8081>
 {settings}    SetEnv HTTPS on
     SetEnvIf X-Forwarded-Proto "https" HTTPS=on
 </VirtualHost>
@@ -1008,11 +965,14 @@ def add(arguments, settings, identity, current=None):
         for path in directory.iterdir():
             if path.is_file():
                 path.chmod(0o600)
-        run(["supervisorctl", "restart", "php" + environment["php"] + "-fpm"])
-        certificate(environment)
         vhost(environment)
-        reload_apache()
-        sync_visibility(settings, {identity: desired}, identities={identity})
+        if batch is None:
+            run(["supervisorctl", "restart", "php" + environment["php"] + "-fpm"])
+            reload_apache()
+            sync_visibility(settings, {identity: desired}, identities={identity})
+        else:
+            batch["php"].add(environment["php"])
+            batch["reload"] = True
         environment["status"] = "ready"
         environment["applied"] = desired
         environment["build_hash"] = build_hash
@@ -1139,66 +1099,27 @@ def main():
             run(["git", "config", "--global", "--replace-all", "safe.directory", str(PROJECTS) + "/*",
                  "^" + re.escape(str(PROJECTS)) + "/"])
             apply_settings(settings)
-            ca = CONFIGURATION / "ca"
-            ca.mkdir(exist_ok=True)
-            ca.chmod(0o755)
-            if (ca / "certificate.crt").exists() != (ca / "private.key").exists():
-                raise ValueError("Incomplete local CA; restore its matching certificate and key.")
-            if not (ca / "certificate.crt").exists():
-                run(["openssl", "req", "-x509", "-newkey", "rsa:3072", "-nodes", "-days", "3650", "-sha256",
-                     "-keyout", str(ca / "private.key"), "-out", str(ca / "certificate.crt"),
-                     "-subj", "/CN=LAMP development CA", "-addext", "basicConstraints=critical,CA:TRUE",
-                     "-addext", "keyUsage=critical,keyCertSign,cRLSign"])
-                (ca / "certificate.crt").chmod(0o644)
-            default_tls = STATE / "environments" / "default"
-            default_tls.mkdir(exist_ok=True)
-            default_environment = {"id": "default", "hostname": "lamp.invalid", "status": "ready"}
-            admin_hostname = "phpmyadmin." + settings["domain"]
-            port = os.environ.get("LAMP_HTTPS_PORT", "8443")
-            if not port.isdigit() or not 1 <= int(port) <= 65535:
-                raise ValueError("Invalid LAMP_HTTPS_PORT.")
-            admin = {
-                "id": "phpmyadmin", "hostname": admin_hostname, "status": "ready",
-                "document_root": "/opt/phpmyadmin", "php": "8.5",
-                "url": "https://" + admin_hostname + (":" + port if port != "443" else ""),
-            }
-            (STATE / "environments" / admin["id"]).mkdir(exist_ok=True)
-            for environment in [default_environment, admin, *environments()]:
-                pending = environment["id"] not in ("default", "phpmyadmin") and (
+            # Leftovers of the former built-in phpMyAdmin vhost and of the local https certificates.
+            for leftover in (ENABLED / "lamp-phpmyadmin.conf", SITES / "lamp-phpmyadmin.conf", ENABLED / "phpmyadmin.conf",
+                             *(STATE / "environments").glob("*/tls.*")):
+                leftover.unlink(missing_ok=True)
+            for leftover in ("phpmyadmin", "default"):
+                shutil.rmtree(STATE / "environments" / leftover, ignore_errors=True)
+            for environment in environments():
+                pending = bool(subdomain_labels(specification(environment))) and (
                     desired.get(environment["id"]) != specification(environment)
                     or environment["url"] != environment_url(environment["id"], desired[environment["id"]], settings)
                     or environment["php"] != resolve_php(environment_project(environment), desired[environment["id"]]["php"])
-                    or ((environment.get("project_owned") or environment.get("setup_environment"))
-                        and environment.get("build_hash") != resolve_build(desired[environment["id"]])[1]))
+                    or (environment.get("project_owned") and environment.get("build_hash") != resolve_build(desired[environment["id"]])[1]))
                 if environment["status"] != "ready" or pending:
                     (ENABLED / ("lamp-" + environment["id"] + ".conf")).unlink(missing_ok=True)
-                    continue
-                check = subprocess.run(["openssl", "x509", "-checkend", "2592000", "-noout", "-in",
-                                        str(STATE / "environments" / environment["id"] / "tls.crt")],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                hostname_check = subprocess.run(["openssl", "x509", "-checkhost", environment["hostname"],
-                                                "-noout", "-in", str(STATE / "environments" / environment["id"] / "tls.crt")],
-                                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if check.returncode or hostname_check.returncode:
-                    certificate(environment)
-                if environment["id"] not in ("default", "phpmyadmin") and not (ENABLED / ("lamp-" + environment["id"] + ".conf")).exists():
+                else:
+                    # Rewritten on every start so vhost format changes reach existing environments.
                     vhost(environment)
-            vhost(admin)
-            # Replace the previous certificate-dependent phpMyAdmin vhost without deleting its configuration.
-            (ENABLED / "phpmyadmin.conf").unlink(missing_ok=True)
             default = SITES / "000-000-lamp-deny.conf"
-            default.write_text(f"""Listen 127.0.0.1:8081
+            default.write_text("""Listen 127.0.0.1:8081
 <VirtualHost *:80 127.0.0.1:8081>
     ServerName lamp.invalid
-    <Location />
-        Require all denied
-    </Location>
-</VirtualHost>
-<VirtualHost *:443>
-    ServerName lamp.invalid
-    SSLEngine on
-    SSLCertificateFile "{default_tls}/tls.crt"
-    SSLCertificateKeyFile "{default_tls}/tls.key"
     <Location />
         Require all denied
     </Location>

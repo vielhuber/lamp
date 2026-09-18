@@ -42,7 +42,7 @@ class HostnamesTest(unittest.TestCase):
     def test_invalid_subdomain_lists_are_rejected(self):
         for labels in [[], [''], ['valid', None], ['valid', 42], ['valid', []], ['valid', 'UPPER'],
                        ['valid', 'a.b'], ['valid', '../path'], ['valid', 'line\nHost'],
-                       ['valid', 'phpmyadmin'], ['same', 'same'], ['valid', 'a' * 64]]:
+                       ['same', 'same'], ['valid', 'a' * 64]]:
             with self.subTest(labels=labels), self.assertRaises(ValueError):
                 control.validate_specification({'subdomain': labels})
 
@@ -73,7 +73,7 @@ class HostnamesTest(unittest.TestCase):
         self.assertEqual(['one.example.test', 'two.example.test', 'one-extra.example.test'],
                          control.environment_hostnames('abcdef012345', value, {'domain': 'example.test'}))
 
-    def test_explicit_hosts_reach_tls_vhosts_and_show(self):
+    def test_explicit_hosts_reach_the_vhost_and_show(self):
         identity = '0123456789ab'
         value = control.validate_specification({'subdomain': ['site', 'shop', 'blog', 'events', 'press', 'jobs']})
         settings = {'domain': 'example.test'}
@@ -82,17 +82,23 @@ class HostnamesTest(unittest.TestCase):
             environment = {**value, 'id': identity, 'hostname': control.environment_hostname(identity, value, settings),
                            'hostnames': control.environment_hostnames(identity, value, settings),
                            'url': control.environment_url(identity, value, settings),
-                           'document_root': str(root / 'html/site'), 'php': '8.4'}
-            (root / 'environments' / identity).mkdir(parents=True)
-            with patch.object(control, 'STATE', root), patch.object(control, 'CONFIGURATION', root), \
-                 patch.object(control, 'SITES', root), patch.object(control, 'ENABLED', root), patch.object(control, 'run'):
-                control.certificate(environment)
+                           'document_root': str(root / 'html/site'), 'php': '8.4', 'path': str(root / 'html'),
+                           'engine': 'mysql', 'db_name': 'site', 'db_engine': 'mysql', 'password': 'a' * 48}
+            (root / 'secrets').mkdir()
+            (root / 'secrets' / 'database-password').write_text('rootpw\n')
+            with patch.object(control, 'SITES', root), patch.object(control, 'ENABLED', root), patch.object(control, 'STATE', root):
                 control.vhost(environment)
-            tls = (root / 'environments' / identity / 'tls.ext').read_text()
             vhost = (root / ('lamp-' + identity + '.conf')).read_text()
-            self.assertIn('subjectAltName=' + ','.join('DNS:' + host for host in environment['hostnames']) + '\n', tls)
-            self.assertEqual(3, vhost.count('ServerAlias ' + ' '.join(environment['hostnames'][1:])))
-            self.assertEqual(2, vhost.count('DocumentRoot "' + environment['document_root'] + '"'))
+            self.assertIn('    SetEnv DB_DATABASE "site"\n', vhost)
+            self.assertIn('    SetEnv DB_USERNAME "root"\n', vhost)
+            self.assertIn('    SetEnv DB_PASSWORD "rootpw"\n', vhost)
+            self.assertNotIn('lamp_' + identity, vhost)
+            self.assertIn('    SetEnv APP_URL "https://site.example.test"\n', vhost)
+            self.assertIn('    SetEnv LAMP_DATA_DIR "' + str(root / 'environments' / identity / 'data') + '"\n', vhost)
+            self.assertEqual(1, vhost.count('ServerAlias ' + ' '.join(environment['hostnames'][1:])))
+            self.assertEqual(1, vhost.count('DocumentRoot "' + environment['document_root'] + '"'))
+            self.assertEqual(1, vhost.count('<VirtualHost 127.0.0.1:8081>'))
+            self.assertNotIn('SSLEngine', vhost)
             self.assertEqual(['https://' + host for host in environment['hostnames']], control.show(environment)['urls'])
             self.assertEqual(value['subdomain'], control.show(environment)['subdomain'])
 
@@ -119,27 +125,23 @@ class HostnamesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'same domain'):
             control.validate_domains({'abcdef012345': first, '123456abcdef': second}, {'domain': 'example.test'})
 
-    def test_tls_and_all_vhosts_include_aliases_without_canonical_redirect(self):
+    def test_the_tunnel_vhost_includes_aliases_without_redirects(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             environment = {'id': 'abcdef012345', 'hostname': 'abcdef012345.example.test',
                            'hostnames': ['abcdef012345.example.test', 'abcdef012345-shop.example.test'],
-                           'document_root': str(root), 'php': '8.5', 'url': 'https://abcdef012345.example.test'}
-            (root / 'environments' / environment['id']).mkdir(parents=True)
-            with patch.object(control, 'STATE', root), patch.object(control, 'CONFIGURATION', root), \
-                 patch.object(control, 'SITES', root), patch.object(control, 'ENABLED', root), patch.object(control, 'run'):
-                control.certificate(environment)
+                           'document_root': str(root), 'php': '8.5', 'url': 'https://abcdef012345.example.test',
+                           'path': str(root), 'engine': 'sqlite', 'password': 'b' * 48}
+            with patch.object(control, 'SITES', root), patch.object(control, 'ENABLED', root), patch.object(control, 'STATE', root):
                 control.vhost(environment)
-            tls = (root / 'environments' / environment['id'] / 'tls.ext').read_text()
-            self.assertIn('DNS:abcdef012345.example.test,DNS:abcdef012345-shop.example.test', tls)
             vhost = (root / ('lamp-' + environment['id'] + '.conf')).read_text()
-            self.assertEqual(3, vhost.count('ServerAlias abcdef012345-shop.example.test'))
-            self.assertIn('https://%1%{REQUEST_URI}', vhost)
-            pattern = next(line.split()[2] for line in vhost.splitlines() if 'RewriteCond %{HTTP_HOST}' in line)
-            for host in environment['hostnames']:
-                self.assertEqual(host, re.fullmatch(pattern, host + ':8443').group(1))
-            self.assertIsNone(re.fullmatch(pattern, 'abcdef012345-shop.example.test.evil.test'))
-            self.assertIsNone(re.fullmatch(pattern, 'foreign.example.test'))
+            self.assertEqual(1, vhost.count('ServerAlias abcdef012345-shop.example.test'))
+            self.assertNotIn('Redirect', vhost)
+            self.assertNotIn('Rewrite', vhost)
+            self.assertIn('SetEnvIf X-Forwarded-Proto "https" HTTPS=on', vhost)
+            self.assertIn('    SetEnv DB_CONNECTION "sqlite"\n', vhost)
+            self.assertIn('    SetEnv DB_DATABASE "' + str(root / 'environments' / environment['id'] / 'data' / 'database.sqlite') + '"\n', vhost)
+            self.assertEqual(1, vhost.count('SetEnv DB_PASSWORD'))
             self.assertIn('flushpackets=on', vhost)
             self.assertEqual(['https://' + host for host in environment['hostnames']], control.show(environment)['urls'])
 

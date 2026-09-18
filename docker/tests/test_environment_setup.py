@@ -26,7 +26,7 @@ class EnvironmentSetupTest(unittest.TestCase):
             mocked.start()
             self.addCleanup(mocked.stop)
         for name, arguments in [('run', {'return_value': ''}), ('sync_visibility', {}),
-                                ('connector', {'return_value': True}), ('certificate', {}),
+                                ('connector', {'return_value': True}),
                                 ('vhost', {}), ('reload_apache', {}), ('ensure_vpn', {})]:
             mocked = patch.object(control, name, **arguments)
             setattr(self, name, mocked.start())
