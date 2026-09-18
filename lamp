@@ -233,7 +233,7 @@ if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = sta
     chmod 700 "$directory/.logs"
     log_file=$(mktemp "$directory/.logs/$command-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX.log")
     exec 3>&1 4>&2
-    exec > >(sed -u $'s/\033\\[[0-?]*[ -/]*[@-~]//g;s/\r/\\n/g' | tee -a "$log_file" >&3) 2>&1
+    exec > >(LC_ALL=C sed -u $'s/\033\\[[0-?]*[ -/]*[@-~]//g;s/\r/\\n/g' | tee -a "$log_file" >&3) 2>&1
     log_process=$!
     finish_log() {
         local result=$1 logs_result
