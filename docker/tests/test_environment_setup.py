@@ -4,7 +4,6 @@ import io
 import json
 import os
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -50,22 +49,12 @@ class EnvironmentSetupTest(unittest.TestCase):
             control.main()
         return output.getvalue()
 
-    def execute_build(self, arguments, **options):
-        if arguments[:2] == ['bash', '-c']:
-            output = options.get('output')
-            result = subprocess.run(arguments, cwd=options['cwd'], env=options['environment'],
-                                    stdout=output or subprocess.DEVNULL, stderr=output or subprocess.DEVNULL)
-            if result.returncode:
-                raise RuntimeError('Test build failed; output withheld.')
-        return ''
-
     def test_existing_directory_is_adopted_without_build_until_build_is_requested(self):
         project = control.PROJECTS / 'existing'
         project.mkdir()
         original = project / 'original.txt'
         original.write_text('keep')
         build = 'test "$DB_PASSWORD" = rootpw && test "$DB_DATABASE" = existing && test "$DB_USERNAME" = root && printf built > build-result.txt'
-        self.run.side_effect = self.execute_build
         self.invoke('add', '--id', self.identity, '--subdomain', 'existing', '--db-name', 'existing', '--db-engine', 'mysql', '--build', build)
         environment = control.load_environment(self.identity)
         self.assertFalse((project / 'build-result.txt').exists())
@@ -93,7 +82,6 @@ class EnvironmentSetupTest(unittest.TestCase):
         script.write_text('printf built > build-result.txt\n')
         value = control.validate_specification({'git': remote, 'subdomain': 'existing'})
         control.write_desired([value], None)
-        self.run.side_effect = self.execute_build
         control.reconcile(self.settings, control.desired_state(control.read_desired()[0]))
         self.assertFalse((project / 'build-result.txt').exists())
         self.assertFalse(any(call.args[0][0] in ('git', 'chown', 'bash') for call in self.run.call_args_list))
@@ -108,8 +96,7 @@ class EnvironmentSetupTest(unittest.TestCase):
     def test_failed_project_build_retries_without_recreating_databases(self):
         project = control.PROJECTS / 'created'
         value = control.validate_specification({'subdomain': 'created', 'build': 'exit 1'})
-        self.run.side_effect = self.execute_build
-        with self.assertRaisesRegex(RuntimeError, 'Test build failed'):
+        with self.assertRaisesRegex(RuntimeError, 'bash failed'):
             control.reconcile(self.settings, {self.identity: value})
         self.assertEqual('failed', control.load_environment(self.identity)['status'])
         value['build'] = 'printf recovered > build-result.txt'
@@ -126,7 +113,6 @@ class EnvironmentSetupTest(unittest.TestCase):
                 if adopted:
                     project.mkdir()
                 value = control.validate_specification({'subdomain': [label, label + '-alias'], 'build': 'printf built > keep.txt'})
-                self.run.side_effect = self.execute_build
                 control.reconcile(self.settings, {self.identity: value})
                 self.run.reset_mock()
                 if adopted:
@@ -191,7 +177,6 @@ class EnvironmentSetupTest(unittest.TestCase):
             environment[key] = None
         environment['mysql_owned'] = environment['postgres_owned'] = environment['databases_ready'] = False
         control.save_environment(environment)
-        self.run.side_effect = self.execute_build
         result = json.loads(self.invoke('build', identity))
         environment = control.load_environment(identity)
         self.assertEqual('built', (project / 'build-result.txt').read_text())
@@ -222,6 +207,8 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertIn("export DB_PASSWORD=rootpw\n", setup)
         (control.CONFIGURATION / 'syncdb').mkdir()
         (control.CONFIGURATION / 'syncdb' / 'shop.json').write_text(json.dumps({'engine': 'mysql', 'source': {}}))
+        self.assertIn('export PATH=' + str(control.STATE / 'environments' / environment['id'] / 'bin') + ':"$PATH"\n', setup)
+        self.assertNotIn('export PATH=/', setup.replace('export PATH=' + str(control.STATE), ''))
         with patch.object(control, 'run_sync') as sync, self.assertRaisesRegex(ValueError, 'profile is for mysql'):
             control.sync_database(environment, 'shop')
         sync.assert_not_called()
@@ -305,7 +292,6 @@ class EnvironmentSetupTest(unittest.TestCase):
     def test_build_output_is_written_to_a_private_log_named_in_the_failure(self):
         project = control.PROJECTS / 'logged'
         value = control.validate_specification({'subdomain': 'logged', 'build': 'echo progress; echo problem >&2; exit 3'})
-        self.run.side_effect = self.execute_build
         with self.assertRaisesRegex(RuntimeError, 'Build log: .*/environments/abcdef012345/build.log'):
             control.reconcile(self.settings, {self.identity: value})
         log = control.STATE / 'environments' / self.identity / 'build.log'

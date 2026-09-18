@@ -258,6 +258,9 @@ if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = sta
     printf '[%s] %s started\nLog: %s\n' "$(date -u +%FT%TZ)" "$command" "$log_file"
 fi
 export LAMP_DATA_DIR="$directory/.data"
+# interactive calls get a terminal inside the container (progress bars); piped calls stay plain
+tty=(-T)
+if [[ -t 0 && -t 1 ]]; then tty=(); fi
 compose=(docker compose --ansi never --progress plain --project-directory "$directory/docker" -f "$directory/docker/docker-compose.yml")
 if [[ -f "$directory/docker/docker-compose.override.yml" ]]; then
     compose+=(-f "$directory/docker/docker-compose.override.yml")
@@ -370,9 +373,9 @@ case "$command" in
     cloudflare-setup) "${compose[@]}" run --rm --no-deps -T app python3 /opt/lamp/cloudflare.py setup ;;
     exec)
         if [[ "$#" = 2 ]]; then
-            "${compose[@]}" exec -T app python3 /opt/lamp/control.py exec "$1" "$2"
+            "${compose[@]}" exec "${tty[@]}" app python3 /opt/lamp/control.py exec "$1" "$2"
         else
-            "${compose[@]}" exec -T app bash -lc "$1"
+            "${compose[@]}" exec "${tty[@]}" app bash -lc "$1"
         fi
         ;;
     curl)

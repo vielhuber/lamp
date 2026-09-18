@@ -6,14 +6,17 @@ import hashlib
 import http.client
 import json
 import os
+import pty
 from pathlib import Path
 import re
 import secrets
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
+import termios
 import time
 import uuid
 from urllib.parse import urlsplit
@@ -819,7 +822,10 @@ def build_environment(environment):
 
 def write_setup(environment):
     variables = build_environment(environment)
-    contents = "".join(f"export {key}={shlex.quote(value)}\n" for key, value in variables.items())
+    # setup.env only prepends the environment's bin directory, so the sourcing shell keeps its own PATH (rvm, nvm).
+    bin_directory = STATE / "environments" / environment["id"] / "bin"
+    contents = "".join(f"export {key}={shlex.quote(value)}\n" if key != "PATH" else f'export PATH={shlex.quote(str(bin_directory))}:"$PATH"\n'
+                       for key, value in variables.items())
     contents += f'''syncdb() {{
     local settings
     settings=$(python3 {shlex.quote(str(Path(__file__).resolve()))} syncdb "$@") || return $?
@@ -1129,10 +1135,29 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
             with log.open("w") as handle:
                 os.umask(0o022)
                 try:
-                    run(["bash", "-c", "set -e\nsource " + shlex.quote(environment["setup_environment"]) + "\n" + build],
-                        cwd=project, environment={**os.environ, **variables}, output=handle)
-                except RuntimeError as error:
-                    raise RuntimeError(f"{error} Build log: {log}") from None
+                    # The build runs on a pseudo-terminal, so tools show progress (pv, npm) as they would interactively;
+                    # the complete output goes to the log and to the terminal at the same time.
+                    master, slave = pty.openpty()
+                    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 160, 0, 0))
+                    process = subprocess.Popen(["bash", "-c", "set -e\nsource " + shlex.quote(environment["setup_environment"]) + "\n" + build],
+                                               cwd=project, env={**os.environ, "TERM": "xterm-256color", **variables},
+                                               stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, close_fds=True)
+                    os.close(slave)
+                    try:
+                        while True:
+                            try:
+                                chunk = os.read(master, 65536)
+                            except OSError:
+                                break
+                            if not chunk:
+                                break
+                            handle.write(chunk)
+                            sys.stderr.buffer.write(chunk)
+                            sys.stderr.buffer.flush()
+                    finally:
+                        os.close(master)
+                    if process.wait():
+                        raise RuntimeError(f"bash failed (exit {process.returncode}). Build log: {log}")
                 finally:
                     environment = load_environment(identity)
             # Services declared by the build in $LAMP_DATA_DIR/supervisor.conf start, restart or stop here.

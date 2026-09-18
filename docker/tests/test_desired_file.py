@@ -27,6 +27,11 @@ class DesiredFileTest(unittest.TestCase):
             mocked = patch.object(control, name, path)
             mocked.start()
             self.addCleanup(mocked.stop)
+        (root / 'hosts').write_text('127.0.0.1 localhost\n')
+        for name, path in [('HOSTS', root / 'hosts')]:
+            mocked = patch.object(control, name, path)
+            mocked.start()
+            self.addCleanup(mocked.stop)
         for name, arguments in [('run', {'return_value': ''}), ('sync_visibility', {}),
                                 ('connector', {'return_value': True}),
                                 ('vhost', {}), ('reload_apache', {}), ('ensure_vpn', {})]:
@@ -104,9 +109,9 @@ class DesiredFileTest(unittest.TestCase):
     def test_services_are_reloaded_after_build_and_on_remove(self):
         control.write_desired([], None)
         identity = self.invoke('add', '--build', ':')['id']
-        calls = [call.args[0] for call in self.run.call_args_list]
-        build = next(index for index, call in enumerate(calls) if call[:2] == ['bash', '-c'])
-        self.assertEqual([['supervisorctl', 'reread'], ['supervisorctl', 'update']], [call for call in calls[build:] if call[0] == 'supervisorctl'][:2])
+        calls = [call.args[0] for call in self.run.call_args_list if call.args[0][0] == 'supervisorctl']
+        self.assertEqual([['supervisorctl', 'reread'], ['supervisorctl', 'update'], ['supervisorctl', 'reread'], ['supervisorctl', 'update'],
+                          ['supervisorctl', 'restart', 'php8.5-fpm']], calls)
         self.run.reset_mock()
         self.invoke('remove', identity)
         self.assertEqual([['supervisorctl', 'reread'], ['supervisorctl', 'update']],
@@ -146,8 +151,7 @@ class DesiredFileTest(unittest.TestCase):
         (control.PROJECTS / 'fine').mkdir()
         entries = [control.validate_specification({'subdomain': 'fine'}), control.validate_specification({'subdomain': 'broken', 'build': 'exit 1'})]
         control.write_desired(entries, None)
-        self.run.side_effect = lambda arguments, **options: (_ for _ in ()).throw(RuntimeError('build failed')) if arguments[:2] == ['bash', '-c'] else ''
-        with self.assertRaisesRegex(RuntimeError, 'build failed'):
+        with self.assertRaisesRegex(RuntimeError, 'bash failed'):
             self.reconcile()
         self.assertEqual(1, self.reload_apache.call_count)
         self.assertEqual({'fine': 'ready', 'broken': 'failed'}, {item['subdomain']: item['status'] for item in control.environments()})
