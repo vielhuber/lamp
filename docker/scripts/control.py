@@ -57,11 +57,12 @@ def validate_identity(identity):
 
 
 def configuration():
-    value = yaml.safe_load((CONFIGURATION / "config.yaml").read_text())
-    sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname", "relayhost", "username", "password")}
+    value = yaml.safe_load((CONFIGURATION / "config" / "settings.yaml").read_text())
+    sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname", "relayhost", "username", "password"),
+                "cloudflare": ("token", "email")}
     if (not isinstance(value, dict) or "domain" not in value or set(value) - {"domain", "vpn", *sections}
             or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", *sections))):
-        raise ValueError("config.yaml must contain domain and optionally git, apache, postfix and vpn mappings; see README.md.")
+        raise ValueError("settings.yaml must contain domain and optionally git, apache, postfix, cloudflare and vpn mappings; see README.md.")
     dns_name = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
     domain = value["domain"]
     if not isinstance(domain, str) or len(domain) > 240 or not re.fullmatch(dns_name, domain):
@@ -185,7 +186,7 @@ def validate_specification(value):
         run(["python3", str(Path(__file__).with_name("vpn.py")), "validate"])
         vpn = configuration().get("vpn", {"enabled": False, "tunnels": []})
         if not vpn["enabled"] or value["vpn"] not in {tunnel["name"] for tunnel in vpn["tunnels"]}:
-            raise ValueError("The required VPN must be enabled and configured in config.yaml under vpn.")
+            raise ValueError("The required VPN must be enabled and configured in settings.yaml under vpn.")
     return value
 
 
@@ -316,26 +317,27 @@ def ordered_settings(settings):
 
 
 def write_desired(entries, original):
-    path = CONFIGURATION / "environments.yaml"
+    path = CONFIGURATION / "config" / "env.yaml"
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as temporary:
-        yaml.safe_dump([ordered_settings(entry) for entry in entries], temporary, sort_keys=False, allow_unicode=True)
+        # One document per entry, separated by blank lines, so the file stays readable when edited by hand.
+        temporary.write("\n".join(yaml.safe_dump([ordered_settings(entry)], sort_keys=False, allow_unicode=True) for entry in entries) or "[]\n")
     try:
         if (path.read_bytes() if path.exists() else None) != original:
-            raise ValueError("environments.yaml changed concurrently; retry without overwriting the edit.")
+            raise ValueError("env.yaml changed concurrently; retry without overwriting the edit.")
         os.replace(temporary.name, path)
     finally:
         Path(temporary.name).unlink(missing_ok=True)
 
 
 def read_desired():
-    path = CONFIGURATION / "environments.yaml"
+    path = CONFIGURATION / "config" / "env.yaml"
     if not path.exists():
         write_desired([entry for entry in (validate_specification(specification(item)) for item in environments()) if subdomain_labels(entry)], None)
     original = path.read_bytes()
     node = yaml.compose(original, Loader=yaml.SafeLoader)
     legacy = isinstance(node, yaml.MappingNode)
     if not isinstance(node, (yaml.SequenceNode, yaml.MappingNode)):
-        raise ValueError("environments.yaml must contain a list of static environments; use [] for none, not an empty file.")
+        raise ValueError("env.yaml must contain a list of static environments; use [] for none, not an empty file.")
     for mapping in ([settings for _, settings in node.value] if legacy else node.value):
         if not isinstance(mapping, yaml.MappingNode):
             raise ValueError("Each environment must contain a settings mapping.")
@@ -349,9 +351,9 @@ def read_desired():
         # Older files were keyed by ID and listed dynamic environments; those live in the runtime state only now.
         entries = [entry for entry in entries if subdomain_labels(entry)]
     if any(not subdomain_labels(entry) for entry in entries):
-        raise ValueError("environments.yaml lists static environments only; every entry needs a subdomain. Create dynamic environments with lamp add.")
+        raise ValueError("env.yaml lists static environments only; every entry needs a subdomain. Create dynamic environments with lamp add.")
     if any(entry in entries[index + 1:] for index, entry in enumerate(entries)):
-        raise ValueError("environments.yaml contains the same environment twice.")
+        raise ValueError("env.yaml contains the same environment twice.")
     if legacy or any(list(settings) != list(ordered_settings(entry)) for settings, entry in zip(raw, entries)):
         write_desired(entries, original)
         original = path.read_bytes()
@@ -452,15 +454,48 @@ def reconcile(settings, desired, *, validate_only=False):
     sync_visibility(settings, desired)
 
 
+def apply_entry(settings, identity, value, environment, batch):
+    applied = {**specification(environment), "visibility": value["visibility"],
+               "subdomain": value["subdomain"], "aliases": value["aliases"]} if environment else None
+    reason = None
+    if environment is None:
+        reason = "new entry in env.yaml"
+    elif environment["status"] != "ready":
+        reason = "previous attempt " + environment["status"] + ", retrying"
+    elif applied != value:
+        reason = "settings changed in env.yaml"
+    elif environment["url"] != environment_url(identity, value, settings):
+        reason = "domain changed, new url " + environment_url(identity, value, settings)
+    elif environment["php"] != resolve_php(environment_project(environment), value["php"]):
+        reason = "php version changed"
+    elif environment.get("project_owned") and environment.get("build_hash") != resolve_build(value)[1]:
+        reason = "build script changed, rebuilding"
+    if reason is not None:
+        add(argparse.Namespace(**value), settings, identity, environment, reason=reason, batch=batch)
+    elif environment.get("visibility") != value["visibility"] or specification(environment) != value:
+        if hostnames(environment) != environment_hostnames(identity, value, settings):
+            environment["aliases"] = value["aliases"]
+            environment["hostnames"] = environment_hostnames(identity, value, settings)
+            try:
+                vhost(environment)
+            except (OSError, RuntimeError):
+                (ENABLED / ("lamp-" + identity + ".conf")).unlink(missing_ok=True)
+                raise
+            finally:
+                batch["reload"] = True
+        environment["subdomain"] = value["subdomain"]
+        environment["visibility"] = value["visibility"]
+        environment["applied"] = value
+        save_environment(environment)
+
+
 def cloudflare_request(method, resource, payload=None):
-    credentials = CONFIGURATION / "cloudflare"
-    token_file = credentials / "cloudflare-api-token"
-    if not token_file.is_file() or token_file.stat().st_mode & 0o077:
-        raise ValueError("Supply .data/cloudflare/cloudflare-api-token with mode 600 for Access management.")
-    token = token_file.read_text().strip()
-    account = json.loads((credentials / "cloudflared-credentials.json").read_text()).get("AccountTag")
-    if not token or any(character.isspace() for character in token) or not isinstance(account, str) or not re.fullmatch(r"[a-f0-9]{32}", account):
-        raise ValueError("Invalid Cloudflare management credentials.")
+    token = (configuration().get("cloudflare") or {}).get("token")
+    if not token:
+        raise ValueError("Set cloudflare.token and cloudflare.email in settings.yaml and run lamp cloudflare-setup.")
+    account = json.loads((CONFIGURATION / "cloudflare" / "cloudflared-credentials.json").read_text()).get("AccountTag")
+    if not isinstance(account, str) or not re.fullmatch(r"[a-f0-9]{32}", account):
+        raise ValueError("Invalid cloudflared-credentials.json; run lamp cloudflare-setup.")
     connection = http.client.HTTPSConnection("api.cloudflare.com", timeout=20)
     try:
         connection.request(method, "/client/v4/accounts/" + account + "/access/apps" + resource,
@@ -1281,10 +1316,10 @@ def main():
             identity = validate_identity(arguments.id)
             environment = load_environment(identity)
             if identity not in desired:
-                raise ValueError("Environment is not listed in environments.yaml; add its entry or remove the environment.")
+                raise ValueError("Environment is not listed in env.yaml; add its entry or remove the environment.")
             if resolve_build(desired[identity])[0] is None:
                 raise ValueError("Environment has no build; add a repository script in .data/build or a build setting.")
-            result = add(argparse.Namespace(**desired[identity]), settings, identity, environment)
+            result = add(argparse.Namespace(**desired[identity]), settings, identity, environment, force_build=True, reason="build requested")
         else:
             identity = validate_identity(arguments.id)
             applied = specification(load_environment(identity))

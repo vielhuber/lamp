@@ -194,7 +194,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `./lamp stop`
 - `./lamp docker-reset` (deletes databases, environment metadata and every other compose volume; `.data` and `/var/www` survive)
-- `./lamp start` (re-registers all environments from `.data/environments.yaml`, including database imports and builds)
+- `./lamp start` (re-registers all environments from `.data/config/env.yaml`, including database imports and builds)
 
 </details>
 

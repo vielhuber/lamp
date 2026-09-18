@@ -13,7 +13,8 @@ if sys.argv[1:] not in (["prepare"], ["validate"]):
     raise SystemExit("Usage: vpn.py prepare|validate")
 
 try:
-    configuration = Path("/etc/lamp/config.yaml")
+    configuration = Path("/etc/lamp/config/settings.yaml")
+    profiles = Path("/etc/lamp/vpn")
     runtime = Path("/run/lamp-vpn")
     supervisor = Path("/run/lamp-supervisor")
     settings = {"enabled": False, "tunnels": []}
@@ -55,7 +56,7 @@ try:
         if kind not in ("openvpn", "wireguard") or not isinstance(tunnel.get("config"), str):
             raise ValueError("Invalid tunnel type or profile")
         profile = Path(tunnel["config"]).resolve()
-        if not profile.is_relative_to(configuration.parent / "vpn") or not profile.is_file():
+        if not profile.is_relative_to(profiles) or not profile.is_file():
             raise ValueError("Profiles must be files below /etc/lamp/vpn")
         content = profile.read_text()
         hosts = tunnel.get("hosts", {})
@@ -140,4 +141,4 @@ try:
             configuration.chmod(0o600)
     print(f"VPN configuration valid: {len(names)} manual tunnel(s); no connection started.")
 except (OSError, ValueError, TypeError, yaml.YAMLError):
-    raise SystemExit("Invalid VPN configuration; check config.yaml under vpn and private profiles. Details withheld to protect credentials.") from None
+    raise SystemExit("Invalid VPN configuration; check settings.yaml under vpn and private profiles. Details withheld to protect credentials.") from None

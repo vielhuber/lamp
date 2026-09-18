@@ -5,15 +5,14 @@ test -f /.dockerenv
 umask 022
 mkdir -p /etc/lamp /etc/lamp/ssh
 chmod 700 /etc/lamp/ssh
-if [[ ! -f /etc/lamp/config.yaml ]]; then
-    printf '%s\n' 'Missing /etc/lamp/config.yaml. Create .data/config.yaml on the host as documented in README.md.' >&2
+if [[ ! -f /etc/lamp/config/settings.yaml ]]; then
+    printf '%s\n' 'Missing /etc/lamp/config/settings.yaml. Create .data/config/settings.yaml on the host as documented in README.md.' >&2
     exit 1
 fi
-mkdir -p /var/lib/lamp/secrets /var/lib/lamp/ssh /var/lib/lamp/phpmyadmin \
-    /var/lib/lamp/syncdb /var/lib/lamp/cliproxyapi /run/lamp-supervisor \
+mkdir -p /var/lib/lamp/secrets /var/lib/lamp/ssh /var/lib/lamp/syncdb /run/lamp-supervisor \
     /run/php /run/mysqld /run/postgresql /run/redis /run/sshd /var/log/supervisor /tmp/xdebug
 chmod 700 /var/lib/lamp/secrets /var/lib/lamp/ssh
-rm -f /run/lamp-supervisor/cloudflared.conf /run/lamp-supervisor/ngrok.conf /run/lamp-supervisor/cliproxyapi.conf
+rm -f /run/lamp-supervisor/cloudflared.conf /run/lamp-supervisor/ngrok.conf
 chmod 1777 /tmp/xdebug
 chown mysql:mysql /run/mysqld /var/lib/mysql
 chown postgres:postgres /run/postgresql /var/lib/postgresql

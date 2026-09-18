@@ -34,7 +34,10 @@ class EnvironmentSetupTest(unittest.TestCase):
         previous_umask = os.umask(0o022)
         self.addCleanup(os.umask, previous_umask)
         (control.STATE / 'environments').mkdir()
-        (control.CONFIGURATION / 'config.yaml').write_text('domain: example.test\n')
+        (control.STATE / 'secrets').mkdir()
+        (control.STATE / 'secrets' / 'database-password').write_text('rootpw\n')
+        (control.CONFIGURATION / 'config').mkdir()
+        (control.CONFIGURATION / 'config' / 'settings.yaml').write_text('domain: example.test\n')
         self.settings = {'domain': 'example.test'}
         self.identity = 'abcdef012345'
 

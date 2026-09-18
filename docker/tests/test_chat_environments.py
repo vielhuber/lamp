@@ -27,7 +27,8 @@ class ChatEnvironmentsTest(unittest.TestCase):
             mocked = patch.object(control, name, self.root / folder)
             mocked.start()
             self.addCleanup(mocked.stop)
-        (control.CONFIGURATION / 'config.yaml').write_text('domain: example.invalid\n')
+        (control.CONFIGURATION / 'config').mkdir()
+        (control.CONFIGURATION / 'config' / 'settings.yaml').write_text('domain: example.invalid\n')
         self.identity = 'abcdef012345'
         self.project = control.PROJECTS / '_environments' / self.identity
         self.project.mkdir(parents=True)

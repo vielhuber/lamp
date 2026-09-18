@@ -22,9 +22,10 @@ class SettingsTest(unittest.TestCase):
         mocked = patch.object(control, 'run')
         self.run = mocked.start()
         self.addCleanup(mocked.stop)
+        (self.root / 'config').mkdir()
 
     def test_optional_sections_are_validated(self):
-        (self.root / 'config.yaml').write_text('domain: example.test\ngit:\n  name: Jane Doe\n  email: jane@example.test\n'
+        (self.root / 'config' / 'settings.yaml').write_text('domain: example.test\ngit:\n  name: Jane Doe\n  email: jane@example.test\n'
                                                'apache:\n  admin: admin@example.test\npostfix:\n  hostname: mail.example.test\n')
         settings = control.configuration()
         self.assertEqual({'name': 'Jane Doe', 'email': 'jane@example.test'}, settings['git'])

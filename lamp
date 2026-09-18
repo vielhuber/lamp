@@ -83,7 +83,7 @@ domain: example.com
 #           type: wireguard
 #           config: /etc/lamp/vpn/wg.conf
 PRESET
-    preset "$data/environments.yaml" 600 <<'PRESET'
+    preset "$data/config/env.yaml" 600 <<'PRESET'
 # static environments, one entry per project; lamp add --subdomain appends, lamp remove deletes, start/restart reconciles.
 # an entry and a running environment are the same when every value matches. dynamic environments are not listed here.
 # - git: git@github.com:<owner>/<project>.git

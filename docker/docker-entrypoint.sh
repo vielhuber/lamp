@@ -30,4 +30,4 @@ mv -f "$temporary_directory/docker/docker-compose.yml" /install/docker/docker-co
 rm -rf "$temporary_directory"
 trap - EXIT INT TERM
 
-printf 'lamp initialized. run ./lamp docker-setup, set domain in .data/config.yaml, then ./lamp start.\n'
+printf 'lamp initialized. run ./lamp docker-setup, set domain and cloudflare in .data/config/settings.yaml, then ./lamp cloudflare-setup and ./lamp start.\n'

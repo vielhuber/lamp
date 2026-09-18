@@ -35,9 +35,12 @@ class DesiredFileTest(unittest.TestCase):
         previous_umask = os.umask(0o022)
         self.addCleanup(os.umask, previous_umask)
         (control.STATE / 'environments').mkdir()
-        (control.CONFIGURATION / 'config.yaml').write_text('domain: example.test\n')
+        (control.STATE / 'secrets').mkdir()
+        (control.STATE / 'secrets' / 'database-password').write_text('rootpw\n')
+        (control.CONFIGURATION / 'config').mkdir()
+        (control.CONFIGURATION / 'config' / 'settings.yaml').write_text('domain: example.test\n')
         self.settings = {'domain': 'example.test'}
-        self.file = control.CONFIGURATION / 'environments.yaml'
+        self.file = control.CONFIGURATION / 'config' / 'env.yaml'
 
     def invoke(self, *arguments):
         exists = Path.exists
@@ -86,6 +89,67 @@ class DesiredFileTest(unittest.TestCase):
         self.assertEqual([], control.read_desired()[0])
         self.assertEqual([], control.environments())
         self.assertTrue((control.PROJECTS / 'site').is_dir())
+
+    def test_entries_are_separated_by_blank_lines(self):
+        control.write_desired([control.validate_specification({'subdomain': 'one'}), control.validate_specification({'subdomain': 'two'})], None)
+        text = self.file.read_text()
+        self.assertEqual(1, text.count('\n\n'))
+        self.assertIn('  visibility: private\n\n- git: null\n', text)
+        self.assertEqual(2, len(control.read_desired()[0]))
+        self.assertEqual(text, self.file.read_text())
+        control.write_desired([], control.read_desired()[1])
+        self.assertEqual('[]\n', self.file.read_text())
+
+    def test_services_are_reloaded_after_build_and_on_remove(self):
+        control.write_desired([], None)
+        identity = self.invoke('add', '--build', ':')['id']
+        calls = [call.args[0] for call in self.run.call_args_list]
+        build = next(index for index, call in enumerate(calls) if call[:2] == ['bash', '-c'])
+        self.assertEqual([['supervisorctl', 'reread'], ['supervisorctl', 'update']], [call for call in calls[build:] if call[0] == 'supervisorctl'][:2])
+        self.run.reset_mock()
+        self.invoke('remove', identity)
+        self.assertEqual([['supervisorctl', 'reread'], ['supervisorctl', 'update']],
+                         [call.args[0] for call in self.run.call_args_list if call.args[0][0] == 'supervisorctl'])
+
+    def test_reconcile_leaves_dynamic_environments_alone_even_when_their_build_changes(self):
+        control.write_desired([], None)
+        (control.CONFIGURATION / 'build').mkdir()
+        dynamic = self.invoke('add', '--git', 'git@example.test:owner/project.git')
+        (control.CONFIGURATION / 'build' / 'example.test-owner-project.sh').write_text('composer install\n')
+        shutil.rmtree(control.PROJECTS / '_environments' / dynamic['id'])
+        with patch.object(control, 'add', side_effect=AssertionError('dynamic environments must not be re-applied')), \
+             patch.object(control, 'remove', side_effect=AssertionError('dynamic environments must not be removed')):
+            self.reconcile()
+        self.assertEqual('ready', control.load_environment(dynamic['id'])['status'])
+
+    def test_reconcile_batches_reloads_restarts_and_access_checks(self):
+        entries = []
+        for label, php in (('one', '8.3'), ('two', '8.3'), ('three', '8.5')):
+            (control.PROJECTS / label).mkdir()
+            entries.append(control.validate_specification({'subdomain': label, 'php': php}))
+        control.write_desired(entries, None)
+        self.reconcile()
+        self.assertEqual(3, len(control.environments()))
+        self.assertEqual(1, self.reload_apache.call_count)
+        self.assertEqual(1, self.connector.call_count)
+        self.assertEqual(2, self.sync_visibility.call_count)
+        self.assertEqual([['supervisorctl', 'restart', 'php8.3-fpm'], ['supervisorctl', 'restart', 'php8.5-fpm']],
+                         [call.args[0] for call in self.run.call_args_list if call.args[0][:2] == ['supervisorctl', 'restart']])
+        self.reload_apache.reset_mock()
+        self.connector.reset_mock()
+        self.reconcile()
+        self.assertEqual(0, self.reload_apache.call_count)
+        self.assertEqual(0, self.connector.call_count)
+
+    def test_failed_entry_still_reloads_apache_once_at_the_end(self):
+        (control.PROJECTS / 'fine').mkdir()
+        entries = [control.validate_specification({'subdomain': 'fine'}), control.validate_specification({'subdomain': 'broken', 'build': 'exit 1'})]
+        control.write_desired(entries, None)
+        self.run.side_effect = lambda arguments, **options: (_ for _ in ()).throw(RuntimeError('build failed')) if arguments[:2] == ['bash', '-c'] else ''
+        with self.assertRaisesRegex(RuntimeError, 'build failed'):
+            self.reconcile()
+        self.assertEqual(1, self.reload_apache.call_count)
+        self.assertEqual({'fine': 'ready', 'broken': 'failed'}, {item['subdomain']: item['status'] for item in control.environments()})
 
     def test_listed_entries_match_by_values_and_changes_replace_the_environment(self):
         (control.PROJECTS / 'site').mkdir()
