@@ -24,6 +24,11 @@ class EnvironmentSetupTest(unittest.TestCase):
             mocked = patch.object(control, name, path)
             mocked.start()
             self.addCleanup(mocked.stop)
+        (root / 'hosts').write_text('127.0.0.1 localhost\n')
+        for name, path in [('HOSTS', root / 'hosts')]:
+            mocked = patch.object(control, name, path)
+            mocked.start()
+            self.addCleanup(mocked.stop)
         for name, arguments in [('run', {'return_value': ''}), ('sync_visibility', {}),
                                 ('connector', {'return_value': True}),
                                 ('vhost', {}), ('reload_apache', {}), ('ensure_vpn', {})]:

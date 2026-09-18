@@ -31,6 +31,8 @@ ENABLED = Path("/etc/apache2/sites-enabled")
 APACHE_SETTINGS = Path("/etc/apache2/conf-available/lamp.conf")
 MAILNAME = Path("/etc/mailname")
 SASL_PASSWORD = Path("/etc/postfix/sasl_passwd")
+LETSENCRYPT = Path("/etc/letsencrypt")
+HOSTS = Path("/etc/hosts")
 DATABASE_ENGINES = ("mysql", "postgres", "sqlite")
 PHP_VERSIONS = ("5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5")
 ENVIRONMENT_DEFAULTS = {"branch": None, "subdomain": None, "aliases": None, "directory": None, "db_name": None, "db_engine": None,
@@ -940,9 +942,11 @@ def vhost(environment):
             settings += f'    ProxyPass "{environment["proxy_exclude"]}" "!"\n'
         upstream = f'http://127.0.0.1:{environment["proxy_port"]}/'
         settings += f'    ProxyPass "/" "{upstream}"\n    ProxyPassReverse "/" "{upstream}"\n'
-    value = f'''<VirtualHost 127.0.0.1:8081>
-{settings}    SetEnv HTTPS on
-    SetEnvIf X-Forwarded-Proto "https" HTTPS=on
+    domain = hostname.split(".", 1)[1]
+    value = f'''<VirtualHost *:443>
+{settings}    SSLEngine on
+    SSLCertificateFile "{LETSENCRYPT}/live/{domain}/fullchain.pem"
+    SSLCertificateKeyFile "{LETSENCRYPT}/live/{domain}/privkey.pem"
 </VirtualHost>
 '''
     path = SITES / ("lamp-" + environment["id"] + ".conf")
@@ -984,7 +988,8 @@ def connector(settings):
     path.write_text(yaml.safe_dump({
         "tunnel": value["TunnelID"], "credentials-file": str(credentials),
         "ingress": [
-            {"hostname": "*." + settings["domain"], "service": "http://127.0.0.1:8081"},
+            {"hostname": "*." + settings["domain"], "service": "https://127.0.0.1:443",
+             "originRequest": {"originServerName": settings["domain"]}},
             {"service": "http_status:404"},
         ],
     }))
@@ -1181,6 +1186,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         (directory / "data").chmod(0o755)
         directory.chmod(0o711)
         for path in directory.iterdir():
+        sync_hosts()
             if path.is_file():
                 path.chmod(0o600)
         vhost(environment)
@@ -1223,6 +1229,7 @@ def remove(identity):
     if environment.get("mysql_owned") or environment.get("postgres_owned"):
         database(environment, remove=True)
     if not subdomain_labels(environment) and project.exists():
+    sync_hosts()
         shutil.rmtree(project)
     (SITES / name).unlink(missing_ok=True)
     shutil.rmtree(STATE / "environments" / identity)
@@ -1322,6 +1329,8 @@ def main():
             for directory in (STATE / "environments", STATE / "syncdb", PROJECTS, CONFIGURATION / "ssh"):
                 directory.mkdir(parents=True, exist_ok=True)
             (STATE / "environments").chmod(0o711)
+            ensure_certificate(settings)
+            sync_hosts()
             run(["git", "config", "--global", "--replace-all", "safe.directory", str(PROJECTS) + "/*",
                  "^" + re.escape(str(PROJECTS)) + "/"])
             apply_settings(settings)
@@ -1343,10 +1352,18 @@ def main():
                     # Rewritten on every start so vhost format changes reach existing environments.
                     vhost(environment)
             default = SITES / "000-000-lamp-deny.conf"
-            default.write_text("""Listen 127.0.0.1:8081
-<VirtualHost *:80 127.0.0.1:8081>
+            default.write_text(f"""<VirtualHost *:80>
     ServerName lamp.invalid
     <Location />
+<VirtualHost *:443>
+    ServerName {settings['domain']}
+    SSLEngine on
+    SSLCertificateFile "{LETSENCRYPT}/live/{settings['domain']}/fullchain.pem"
+    SSLCertificateKeyFile "{LETSENCRYPT}/live/{settings['domain']}/privkey.pem"
+    <Location />
+        Require all denied
+    </Location>
+</VirtualHost>
         Require all denied
     </Location>
 </VirtualHost>

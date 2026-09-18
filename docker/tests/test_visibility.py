@@ -23,6 +23,10 @@ class VisibilityTest(unittest.TestCase):
             mocked = patch.object(control, name, path)
             mocked.start()
             self.addCleanup(mocked.stop)
+        (self.root / 'hosts').write_text('127.0.0.1 localhost\n')
+        mocked = patch.object(control, 'HOSTS', self.root / 'hosts')
+        mocked.start()
+        self.addCleanup(mocked.stop)
         self.identity = 'abcdef012345'
         self.settings = {'domain': 'example.test'}
         self.value = control.validate_specification({'subdomain': 'demo', 'visibility': 'public'})

@@ -23,7 +23,8 @@ class ChatEnvironmentsTest(unittest.TestCase):
         self.root = Path(directory.name)
         for name in ('configuration', 'state', 'projects'):
             (self.root / name).mkdir()
-        for name, folder in [('CONFIGURATION', 'configuration'), ('STATE', 'state'), ('PROJECTS', 'projects')]:
+        (self.root / 'hosts').write_text('127.0.0.1 localhost\n')
+        for name, folder in [('CONFIGURATION', 'configuration'), ('STATE', 'state'), ('PROJECTS', 'projects'), ('HOSTS', 'hosts')]:
             mocked = patch.object(control, name, self.root / folder)
             mocked.start()
             self.addCleanup(mocked.stop)

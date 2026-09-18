@@ -358,7 +358,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - xdebug client host defaults to `localhost` inside the container; set `xdebug.client_host` for an ide on the host (`host.docker.internal` on docker desktop)
 - `uopz` is installed but disabled; jit is disabled
 - managed vhosts deny `.phps`, `.phtml`, `.phar` and dotfiles; requests with `Accept: text/event-stream` use a flushing fpm worker without gzip (sse / `mcp-server.php`)
-- applications that force https in `.htaccess` must honor `X-Forwarded-Proto: https`
+- apache terminates tls itself with the let's encrypt certificate, so `%{HTTPS}`, `$_SERVER['HTTPS']` and https redirects in `.htaccess` behave as in production
 
 </details>
 
@@ -387,7 +387,9 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>tunnel</summary>
 
 - `cloudflare-setup` creates the locally managed tunnel `<domain>`, writes `.data/cloudflare/cloudflared-credentials.json` and points the proxied cname `*.<domain>` at it; a tunnel of that name without local credentials is deleted and recreated
-- supervisor runs `cloudflared` inside the container; the wildcard ingress forwards `*.<domain>` to apache's internal listener `127.0.0.1:8081`, everything else gets 404
+- supervisor runs `cloudflared` inside the container; the wildcard ingress forwards `*.<domain>` to apache's `*:443` with the let's encrypt certificate (origin name `<domain>`), everything else gets 404; no container port is published
+- certificate: on every `start` / `restart` lamp requests or renews a let's encrypt certificate for `<domain>` and `*.<domain>` through the cloudflare dns challenge with `cloudflare.token` (stored in the `certificates` volume, renewed daily by cron); a domain change requests a new one
+- every environment hostname resolves to `127.0.0.1` inside the container (`/etc/hosts`), so builds, `critical`, headless browsers and `curl` inside the container reach the local origin directly with a valid certificate, without cloudflare access
 - without the credentials file `start` works but `add` and configured environments are refused
 - `domain` changes in `settings.yaml` reapply all environments on the next `start` / `restart`; run `cloudflare-setup` again for the new zone
 - never run the same tunnel from two machines
