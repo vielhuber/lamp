@@ -35,4 +35,10 @@ mv -f "$temporary_directory/docker/docker-compose.yml" "$temporary_directory/doc
 rm -rf "$temporary_directory"
 trap - EXIT INT TERM
 
-printf 'lamp initialized. run ./lamp start.\n'
+# boilerplate that can be edited before the first start; existing files are kept
+bash /install/lamp presets
+if [[ "$(id -u)" -eq 0 ]]; then
+    chown -hR "$(stat -c '%u:%g' /install)" /install/.config /install/docker/docker-compose.override.yml
+fi
+
+printf 'lamp initialized. adjust .config/env.yaml and docker/docker-compose.override.yml if needed, then run ./lamp start.\n'

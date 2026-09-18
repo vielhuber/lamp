@@ -39,12 +39,12 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>2. install</summary>
 
 - `mkdir lamp && cd lamp`
-- `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init`
+- `docker run --rm -v "$PWD:/install" ghcr.io/vielhuber/lamp:latest init` (ships the cli and the boilerplate `.config/env.yaml` and `docker/docker-compose.override.yml`; existing files are kept)
 - `sudo ln -s "$(pwd -P)/lamp" /usr/local/bin/lamp`
+- optional: list your environments in `.config/env.yaml` and adjust the projects mount (default `/var/www`) in `docker/docker-compose.override.yml`
 - `./lamp start`
     - the first start asks for the domain, an optional private [data repository](#data-repository) and its ssh key, then creates tunnel, dns record, access application, service token, cache rule and certificate on its own
     - without a data repository it stops after writing the presets: set `cloudflare.token` and `cloudflare.email` in `.data/settings.yaml` and run `./lamp start` again
-- optional: adjust `docker/docker-compose.override.yml` (projects mount, default `/var/www`) and `.config/env.yaml`, then `./lamp restart`
 
 </details>
 
