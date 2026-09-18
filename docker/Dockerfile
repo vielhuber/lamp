@@ -37,7 +37,9 @@ COPY docker/docker-compose.yml ./docker/docker-compose.yml
 ENV PATH="/root/.local/bin:/root/.cargo/bin:/root/.opencode/bin:/root/.syncdb/vendor/bin:/root/.git-filter-repo:${PATH}:/opt/lamp/node-tools" \
     LANG=en_US.UTF-8 \
     TZ=Europe/Berlin \
-    COMPOSER_ALLOW_SUPERUSER=1
+    COMPOSER_ALLOW_SUPERUSER=1 \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome \
+    PUPPETEER_SKIP_DOWNLOAD=true
 
 # Disabled together with the CUDA installation in docker-build.sh.
 # ENV PATH="/usr/local/cuda/bin:${PATH}" NVCC_CCBIN=/usr/bin/g++-14

@@ -587,6 +587,13 @@ apt-get install -y libimage-exiftool-perl
 
 #### speedtest cli
 step 'speedtest cli'
+#### google chrome (puppeteer, critical css, headless browser tests)
+step 'google chrome'
+curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --batch --yes --dearmor -o /usr/share/keyrings/google-chrome.gpg
+printf 'deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main\n' > /etc/apt/sources.list.d/google-chrome.list
+apt-get update
+apt-get install -y google-chrome-stable
+
 curl -fsSL https://packagecloud.io/ookla/speedtest-cli/gpgkey | gpg --dearmor -o /usr/share/keyrings/ookla.gpg
 printf '%s\n' 'deb [signed-by=/usr/share/keyrings/ookla.gpg] https://packagecloud.io/ookla/speedtest-cli/ubuntu/ jammy main' > /etc/apt/sources.list.d/ookla_speedtest-cli.list
 apt-get update
