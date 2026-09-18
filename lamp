@@ -389,8 +389,8 @@ if [[ -n "$data_repository" ]] && [[ "$command" = start || "$command" = restart 
             exit 1
         fi
         key_file=$(mktemp)
-        printf 'Paste a private ssh key that may read %s (used once for the first clone, not stored):\n' "$data_repository" > /dev/tty
         stty -echo < /dev/tty
+        printf 'Paste a private ssh key that may read %s (used once for the first clone, not stored):\n' "$data_repository" > /dev/tty
         while IFS= read -r line < /dev/tty; do
             printf '%s\n' "$line" >> "$key_file"
             if [[ "$line" = -----END*PRIVATE\ KEY----- ]]; then break; fi
