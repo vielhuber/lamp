@@ -59,16 +59,9 @@ if [[ "$command" = docker-setup ]]; then
     }
     mkdir -p "$config" "$directory/docker"
     chmod 700 "$config"
-    data_line='# data: git@github.com:<owner>/lamp-data.git'
-    if [[ -n "$data_repository" ]]; then data_line="data: $data_repository"; fi
-    preset "$config/setup.yaml" 600 <<PRESET
-# settings of this host; .data can be shared between hosts, .config never is.
-# base domain of every environment: https://<subdomain-or-id>.<domain>
-domain: example.com
-
-# optional: private git repository (ssh url) that holds the complete .data folder; cloned on the first start, pulled on every further one
-$data_line
-PRESET
+    setup='domain: example.com'
+    if [[ -n "$data_repository" ]]; then setup+=$'\n\n'"data: $data_repository"; fi
+    preset "$config/setup.yaml" 600 <<< "$setup"
     preset "$config/env.yaml" 600 <<'PRESET'
 # static environments, one entry per project; lamp add --subdomain appends, lamp remove deletes, start/restart reconciles.
 # an entry and a running environment are the same when every value matches. dynamic environments are not listed here.
