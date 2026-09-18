@@ -310,7 +310,7 @@ class VisibilityTest(unittest.TestCase):
 class CloudflareRequestTest(unittest.TestCase):
     def test_api_errors_never_expose_response_or_credentials(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(control, 'CONFIGURATION', Path(directory)), \
-             patch.object(control, 'SETUP', Path(directory)), \
+             patch.object(control, 'SETUP', Path(directory)), patch.object(control, 'STATE', Path(directory)), \
              patch.object(control.http.client, 'HTTPSConnection') as connection:
             folder = Path(directory) / 'cloudflare'
             folder.mkdir()

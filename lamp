@@ -57,8 +57,8 @@ if [[ "$command" = docker-setup ]]; then
         chmod "$mode" "$path"
         printf 'created %s\n' "${path#"$directory/"}"
     }
-    mkdir -p "$config" "$config/cloudflare" "$directory/docker"
-    chmod 700 "$config" "$config/cloudflare"
+    mkdir -p "$config" "$directory/docker"
+    chmod 700 "$config"
     data_line='# data: git@github.com:<owner>/lamp-data.git'
     if [[ -n "$data_repository" ]]; then data_line="data: $data_repository"; fi
     preset "$config/setup.yaml" 600 <<PRESET
@@ -338,8 +338,7 @@ if [[ ! -f "$LAMP_CONFIG_DIR/setup.yaml" || ! -f "$directory/docker/docker-compo
     printf '%s\n' 'Missing .config/setup.yaml or docker/docker-compose.override.yml. Run ./lamp docker-setup first.' >&2
     exit 1
 fi
-mkdir -p "$LAMP_CONFIG_DIR/cloudflare"
-chmod 700 "$LAMP_CONFIG_DIR" "$LAMP_CONFIG_DIR/cloudflare"
+chmod 700 "$LAMP_CONFIG_DIR"
 data_repository=$(sed -n 's/^data:[[:space:]]*//p' "$LAMP_CONFIG_DIR/setup.yaml" | sed "s/[[:space:]]*\(#.*\)\?$//; s/^[\"']//; s/[\"']$//")
 if [[ "$data_repository" = null || "$data_repository" = '~' ]]; then data_repository=; fi
 # without a data repository the .data folder is mounted at /etc/lamp

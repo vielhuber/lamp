@@ -176,7 +176,7 @@ def setup(settings, folder):
 def main():
     if sys.argv[1:] != ["setup"]:
         raise SystemExit("Usage: cloudflare.py setup")
-    results = setup(control.configuration(), control.SETUP / "cloudflare")
+    results = setup(control.configuration(), control.STATE / "cloudflare")
     for name, status in results.items():
         print(f"{name}: {status}")
     if any(status != "ok" for status in results.values()):
@@ -187,5 +187,5 @@ if __name__ == "__main__":
     try:
         main()
     except (OSError, ValueError, RuntimeError, yaml.YAMLError) as error:
-        print(str(error) if not isinstance(error, OSError) else "LAMP filesystem error; check .config/cloudflare permissions.", file=sys.stderr)
+        print(str(error) if not isinstance(error, OSError) else "LAMP filesystem error; check /var/lib/lamp/cloudflare permissions.", file=sys.stderr)
         sys.exit(1)

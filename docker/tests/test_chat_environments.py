@@ -182,7 +182,7 @@ class ChatEnvironmentsTest(unittest.TestCase):
         self.assertEqual(str(self.project), os.getcwd())
 
     def test_access_exports_only_required_headers_for_the_exact_environment(self):
-        folder = control.SETUP / 'cloudflare'
+        folder = control.STATE / 'cloudflare'
         folder.mkdir()
         (folder / 'cloudflare-service-token.yaml').write_text(yaml.safe_dump({
             'CF-Access-Client-Id': 'test-id', 'CF-Access-Client-Secret': 'test-secret', 'unrelated': 'never-export'
@@ -192,7 +192,7 @@ class ChatEnvironmentsTest(unittest.TestCase):
         self.assertEqual({'CF-Access-Client-Id': 'test-id', 'CF-Access-Client-Secret': 'test-secret'}, result['headers'])
 
     def test_read_only_commands_do_not_wait_for_provisioning(self):
-        folder = control.SETUP / 'cloudflare'
+        folder = control.STATE / 'cloudflare'
         folder.mkdir()
         (folder / 'cloudflare-service-token.yaml').write_text(yaml.safe_dump({
             'CF-Access-Client-Id': 'test-id', 'CF-Access-Client-Secret': 'test-secret'

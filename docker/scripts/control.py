@@ -590,7 +590,7 @@ def cloudflare_request(method, resource, payload=None):
     token = (configuration().get("cloudflare") or {}).get("token")
     if not token:
         raise ValueError("Set cloudflare.token and cloudflare.email in settings.yaml and run lamp cloudflare-setup.")
-    account = json.loads((SETUP / "cloudflare" / "cloudflared-credentials.json").read_text()).get("AccountTag")
+    account = json.loads((STATE / "cloudflare" / "cloudflared-credentials.json").read_text()).get("AccountTag")
     if not isinstance(account, str) or not re.fullmatch(r"[a-f0-9]{32}", account):
         raise ValueError("Invalid cloudflared-credentials.json; run lamp cloudflare-setup.")
     connection = http.client.HTTPSConnection("api.cloudflare.com", timeout=20)
@@ -986,7 +986,7 @@ def reload_apache():
 
 
 def connector(settings):
-    credentials = SETUP / "cloudflare" / "cloudflared-credentials.json"
+    credentials = STATE / "cloudflare" / "cloudflared-credentials.json"
     program = Path("/run/lamp-supervisor/cloudflared-lamp.conf")
     if not credentials.exists():
         program.unlink(missing_ok=True)
@@ -1326,7 +1326,7 @@ def main():
         else:
             environment = load_environment(arguments.id)
             names = () if environment.get("visibility") == "public" else ("CF-Access-Client-Id", "CF-Access-Client-Secret")
-            headers = yaml.safe_load((SETUP / "cloudflare" / "cloudflare-service-token.yaml").read_text()) if names else {}
+            headers = yaml.safe_load((STATE / "cloudflare" / "cloudflare-service-token.yaml").read_text()) if names else {}
             if not isinstance(headers, dict) or any(not isinstance(headers.get(name), str) or not headers[name] or re.search(r"[\r\n\0]", headers[name]) for name in names):
                 raise ValueError("Invalid Cloudflare service token configuration.")
             result = {"origin": environment["url"], "headers": {name: headers[name] for name in names}}

@@ -199,6 +199,10 @@ fi
 
 #### start
 python3 /opt/lamp/vpn.py prepare
+# tunnel credentials and service token are derived from cloudflare.token; a docker-reset deletes them with the state
+if [[ ! -f /var/lib/lamp/cloudflare/cloudflared-credentials.json ]]; then
+    python3 /opt/lamp/cloudflare.py setup | grep -v '^next:'
+fi
 python3 /opt/lamp/control.py prepare
 apachectl configtest
 /usr/sbin/sshd -t

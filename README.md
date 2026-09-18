@@ -223,7 +223,6 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | ------------------------------------ | --------------------------------------------------------------------------------- | ----------------------- |
 | `.config/setup.yaml`                 | host-specific: `domain`, optional `data` repository (mode 600)                    | yes                     |
 | `.config/env.yaml`                   | host-specific: desired environments (mode 600)                                    | yes                     |
-| `.config/cloudflare/`                | host-specific: tunnel credentials and access service token, by `cloudflare-setup` | yes                     |
 | `.data/settings.yaml`                | optional `git`, `apache`, `postfix`, `cloudflare`, `php`, `vpn`, … (mode 600)     | yes                     |
 | `docker/docker-compose.override.yml` | host-specific: projects mount, extra mounts and ports (gitignored)                | yes                     |
 | `.data/build/*.sh`                   | shared repository build scripts (mode 600)                                        | yes                     |
@@ -405,11 +404,11 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>tunnel</summary>
 
-- `cloudflare-setup` creates the locally managed tunnel `<domain>`, writes `.config/cloudflare/cloudflared-credentials.json` and points the proxied cname `*.<domain>` at it; a tunnel of that name without local credentials is deleted and recreated
+- `cloudflare-setup` creates the locally managed tunnel `<domain>`, writes `/var/lib/lamp/cloudflare/cloudflared-credentials.json` (state volume) and points the proxied cname `*.<domain>` at it; a tunnel of that name without local credentials is deleted and recreated
 - supervisor runs `cloudflared` inside the container; the wildcard ingress forwards `*.<domain>` to apache's `*:443` with the let's encrypt certificate (origin name `<domain>`), everything else gets 404; no container port is published
 - certificate: on every `start` / `restart` lamp requests or renews a let's encrypt certificate for `<domain>` and `*.<domain>` through the cloudflare dns challenge with `cloudflare.token` (stored in the `certificates` volume, renewed daily by cron); a domain change requests a new one
 - every environment hostname resolves to `127.0.0.1` inside the container (`/etc/hosts`), so builds, `critical`, headless browsers and `curl` inside the container reach the local origin directly with a valid certificate, without cloudflare access
-- without the credentials file `start` works but `add` and configured environments are refused
+- `start` runs the setup itself when the credentials are missing, e.g. after `docker-reset`: the tunnel is recreated and the service token rotated from `cloudflare.token`
 - `domain` changes in `setup.yaml` reapply all environments on the next `start` / `restart`; run `cloudflare-setup` again for the new zone
 - never run the same tunnel from two machines
 
@@ -419,7 +418,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>access</summary>
 
-- `cloudflare-setup` creates the self-hosted application `lamp <domain>` for `*.<domain>` (found by its wildcard destination, so several lamp instances with different domains share one account) with policy `developer` (allow `cloudflare.email`) and policy `harness` (service token `lamp`), and writes `.config/cloudflare/cloudflare-service-token.yaml`; a rerun restores these settings if they were changed
+- `cloudflare-setup` creates the self-hosted application `lamp <domain>` for `*.<domain>` (found by its wildcard destination, so several lamp instances with different domains share one account) with policy `developer` (allow `cloudflare.email`) and policy `harness` (service token `lamp`), and writes `/var/lib/lamp/cloudflare/cloudflare-service-token.yaml`; a rerun restores these settings if they were changed
 - customers: a separate application per exact hostname with an `allow` policy for their exact emails via one-time pin; revoke sessions when withdrawing access
 - session tip: global session one month, application session 24 hours, developer policy `same as application`
 - `visibility: public` creates `lamp-public:<domain>:<id>` with a `bypass › everyone` policy for exactly the environment's hostnames; private removes it; the wildcard stays untouched
@@ -452,7 +451,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>service token (harness)</summary>
 
-- created by `cloudflare-setup` as `.config/cloudflare/cloudflare-service-token.yaml`; if the file is lost, a rerun rotates the secret
+- created by `cloudflare-setup` as `/var/lib/lamp/cloudflare/cloudflare-service-token.yaml`; if the file is lost, a rerun rotates the secret
 - `./lamp curl <id> -- -fsS https://<hostname>/` and the `curl` wrapper inside `exec <id>` send the headers only to that environment's exact https origin, never follow redirects with credentials, and refuse unsupported options
 - `./lamp access <id>` prints origin and headers as json for trusted integrations; keep it out of visible tool calls and logs
 - public environments send no token; their own application logins still apply
