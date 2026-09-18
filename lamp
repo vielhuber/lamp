@@ -26,7 +26,8 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
     exit 0
 fi
 case "$command" in
-    docker-setup|docker-build|docker-reset|cloudflare-setup|start|restart|stop|status|version|ssh) test "$#" -eq 0 ;;
+    docker-setup|docker-build|docker-reset|cloudflare-setup|start|restart|stop|status|version) test "$#" -eq 0 ;;
+    ssh) test "$#" -le 1 ;;
     build) test "$#" -eq 1 ;;
     list) test "$#" -eq 0 || [[ "$#" = 2 && "$1" = --search ]] ;;
     syncdb) test "$#" -eq 1 ;;
@@ -358,7 +359,14 @@ case "$command" in
         "${compose[@]}" exec -T app python3 /opt/lamp/control.py reconcile
         ;;
     stop) "${compose[@]}" stop ;;
-    ssh) "${compose[@]}" exec app bash -il ;;
+    ssh)
+        if [[ "$#" = 1 ]]; then
+            identity=$("${compose[@]}" exec -T app python3 /opt/lamp/control.py show "$1" | python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])')
+            "${compose[@]}" exec app bash -c "source /var/lib/lamp/environments/$identity/setup.env && cd \"\$LAMP_PROJECT_DIR\" && git status; exec bash -il"
+        else
+            "${compose[@]}" exec app bash -il
+        fi
+        ;;
     cloudflare-setup) "${compose[@]}" run --rm --no-deps -T app python3 /opt/lamp/cloudflare.py setup ;;
     exec)
         if [[ "$#" = 2 ]]; then
