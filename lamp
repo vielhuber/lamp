@@ -45,10 +45,26 @@ configured_data_repository() {
     printf '%s' "$value"
 }
 # with a data repository /etc/lamp is a clone inside the container (state volume): cloned once with a pasted key, mirrored from the repository afterwards
+read_data_key() {
+    local line
+    if ! { : < /dev/tty; } 2> /dev/null; then
+        printf 'The first clone of %s needs a terminal to ask for a private ssh key.\n' "$data_repository" >&2
+        exit 1
+    fi
+    stty -echo < /dev/tty
+    printf 'Private ssh key that may read %s (paste it; the input stays hidden, is used once and not stored): ' "$data_repository" > /dev/tty
+    data_key=
+    while IFS= read -r line < /dev/tty; do
+        data_key+="$line"$'\n'
+        if [[ "$line" = -----END*PRIVATE\ KEY----- ]]; then break; fi
+    done
+    stty echo < /dev/tty
+    printf 'received\n' > /dev/tty
+}
 sync_data() {
-    local in_container data_result line
-    # a one-off container sees the mounts of the next start; build, syncdb and add need the running container anyway
-    in_container=("${compose[@]}" run --rm --no-deps -T app)
+    local in_container data_result
+    # a one-off container sees the mounts of the next start; build, syncdb and add need the running container anyway; the later flag silences compose
+    in_container=("${compose[@]}" --progress quiet run --rm --no-deps -T app)
     if [[ "$command" = build || "$command" = syncdb || "$command" = add ]]; then in_container=("${compose[@]}" exec -T app); fi
     data_result=0
     "${in_container[@]}" bash -c 'set -euo pipefail
@@ -61,27 +77,20 @@ sync_data() {
             printf "Warning: the data repository could not be fetched; continuing with the last state.\n" >&2
         fi' < /dev/null || data_result=$?
     if [[ "$data_result" = 3 ]]; then
-        if ! { : < /dev/tty; } 2> /dev/null; then
-            printf 'The first clone of %s needs a terminal to ask for a private ssh key.\n' "$data_repository" >&2
-            exit 1
-        fi
-        stty -echo < /dev/tty
-        printf 'Paste a private ssh key that may read %s (used once for the first clone, not stored):\n' "$data_repository" > /dev/tty
+        if [[ -z "${data_key:-}" ]]; then read_data_key; fi
         data_result=0
-        while IFS= read -r line < /dev/tty; do
-            printf '%s\n' "$line"
-            if [[ "$line" = -----END*PRIVATE\ KEY----- ]]; then break; fi
-        done | "${in_container[@]}" bash -c 'set -euo pipefail
+        printf '%s' "$data_key" | "${in_container[@]}" bash -c 'set -euo pipefail
             umask 077
             trap "rm -f /dev/shm/lamp-data-key" EXIT
             cat > /dev/shm/lamp-data-key
             GIT_SSH_COMMAND="ssh -i /dev/shm/lamp-data-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR" git clone --quiet "$1" /var/lib/lamp/data
             chmod -R go= /var/lib/lamp/data' lamp "$data_repository" || data_result=$?
-        stty echo < /dev/tty
+        data_key=
         if [[ "$data_result" != 0 ]]; then
             printf 'The data repository could not be cloned with this key.\n' >&2
             exit 1
         fi
+        printf 'cloned  %s\n' "$data_repository"
     elif [[ "$data_result" != 0 ]]; then
         exit "$data_result"
     fi
@@ -101,6 +110,7 @@ if [[ "$command" = docker-setup ]]; then
             printf '%s\n' 'The data repository must be an ssh url like git@github.com:<owner>/lamp-data.git.' >&2
             exit 2
         fi
+        if [[ -n "$data_repository" ]]; then read_data_key; fi
     fi
     preset() {
         local path=$1 mode=$2
@@ -457,7 +467,7 @@ case "$command" in
             "${compose[@]}" exec app bash -il
         fi
         ;;
-    cloudflare-setup) "${compose[@]}" run --rm --no-deps -T app python3 /opt/lamp/cloudflare.py setup ;;
+    cloudflare-setup) "${compose[@]}" --progress quiet run --rm --no-deps -T app python3 /opt/lamp/cloudflare.py setup ;;
     exec)
         if [[ "$#" = 2 ]]; then
             "${compose[@]}" exec "${tty[@]}" app python3 /opt/lamp/control.py exec "$1" "$2"
