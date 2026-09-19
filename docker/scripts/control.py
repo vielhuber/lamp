@@ -815,6 +815,8 @@ def environment_variables(environment):
     })
     if environment["engine"] == "sqlite":
         variables["DB_DATABASE"] = str(directory / "data" / "database.sqlite")
+    if environment["engine"] == "postgres":
+        variables.update({"DB_CONNECTION": "pgsql", "DB_PORT": "5432"})
     return variables
 
 
@@ -846,6 +848,12 @@ def write_setup(environment):
     eval "$settings"
 }}
 export -f syncdb
+db_engine() {{
+    local settings
+    settings=$(python3 {shlex.quote(str(Path(__file__).resolve()))} db_engine "$@") || return $?
+    eval "$settings"
+}}
+export -f db_engine
 '''
     path = Path(environment["setup_environment"])
     path.write_text(contents)
@@ -1280,6 +1288,7 @@ def main():
     branch.add_argument("--base", default="main")
     branch.add_argument("--operation", choices=("switch", "rename"), default="switch")
     commands.add_parser("syncdb").add_argument("profile")
+    commands.add_parser("db_engine").add_argument("engine", choices=("mysql", "postgres"))
     commands.add_parser("sync").add_argument("profile")
     create = commands.add_parser("add")
     create.add_argument("--git")
@@ -1319,6 +1328,19 @@ def main():
         save_environment(environment)
         variables = write_setup(environment)
         for key in ("DB_CONNECTION", "DB_DATABASE"):
+            print(f"export {key}={shlex.quote(variables[key])}")
+        return
+    if arguments.command == "db_engine":
+        # A build of a dynamic environment names its engine (both isolated databases exist); a static one has db_engine in env.yaml.
+        environment = load_environment(os.environ.get("LAMP_ID"))
+        if subdomain_labels(environment):
+            if environment.get("db_engine") != arguments.engine:
+                raise ValueError(f"The build expects {arguments.engine}, but env.yaml sets db_engine {environment.get('db_engine')} for this environment.")
+            return
+        environment["engine"] = arguments.engine
+        save_environment(environment)
+        variables = write_setup(environment)
+        for key in ("DB_CONNECTION", "DB_PORT"):
             print(f"export {key}={shlex.quote(variables[key])}")
         return
     if arguments.command in ("list", "show", "access"):

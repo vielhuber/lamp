@@ -248,6 +248,22 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertNotIn('DB_', Path(plain['setup_environment']).read_text())
         self.assertIsNone(plain['database'])
 
+    def test_a_build_switches_a_dynamic_environment_to_postgres(self):
+        dynamic = json.loads(self.invoke('add'))
+        with patch.dict(os.environ, {'LAMP_ID': dynamic['id']}):
+            self.assertEqual('export DB_CONNECTION=pgsql\nexport DB_PORT=5432\n', self.invoke('db_engine', 'postgres'))
+        setup = Path(control.load_environment(dynamic['id'])['setup_environment']).read_text()
+        self.assertIn('export DB_CONNECTION=pgsql\n', setup)
+        self.assertIn('export DB_PORT=5432\n', setup)
+        self.assertIn('export DB_DATABASE=lamp_' + dynamic['id'] + '\n', setup)
+        self.assertIn('db_engine() {', setup)
+        (control.PROJECTS / 'shop').mkdir()
+        static = json.loads(self.invoke('add', '--subdomain', 'shop', '--db-name', 'shop', '--db-engine', 'mysql'))
+        with patch.dict(os.environ, {'LAMP_ID': static['id']}):
+            self.assertEqual('', self.invoke('db_engine', 'mysql'))
+            with self.assertRaisesRegex(ValueError, 'env.yaml sets db_engine mysql'):
+                self.invoke('db_engine', 'postgres')
+
     def test_commands_accept_a_subdomain_instead_of_the_id(self):
         (control.PROJECTS / 'site').mkdir()
         identity = json.loads(self.invoke('add', '--subdomain', ['site', 'shop'][0], '--alias', 'shop'))['id']
