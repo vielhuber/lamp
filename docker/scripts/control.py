@@ -1274,7 +1274,7 @@ def remove(identity):
 def main():
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("prepare", "validate", "reconcile"):
+    for command in ("prepare", "validate", "reconcile", "reset"):
         commands.add_parser(command)
     commands.add_parser("list").add_argument("--search")
     for command in ("show", "remove", "access", "build"):
@@ -1522,6 +1522,14 @@ def main():
             result = add(arguments, settings, identity)
         elif arguments.command == "reconcile":
             reconcile(settings, desired)
+            return
+        elif arguments.command == "reset":
+            # Dynamic environments belong to chats; static ones and their databases stay.
+            dynamic = [item for item in environments() if not subdomain_labels(item)]
+            for item in dynamic:
+                remove(item["id"])
+                print(f"🗑️ {item['hostname']} removed ({item.get('git') or 'no repository'})")
+            print(f"✅ {len(dynamic)} dynamic environment(s) removed")
             return
         elif arguments.command == "sync":
             run_profile(arguments.profile)

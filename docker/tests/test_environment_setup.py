@@ -264,6 +264,18 @@ class EnvironmentSetupTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'env.yaml sets db_engine mysql'):
                 self.invoke('db_engine', 'postgres')
 
+    def test_reset_removes_only_the_dynamic_environments(self):
+        (control.PROJECTS / 'shop').mkdir()
+        self.invoke('add', '--subdomain', 'shop')
+        first, second = json.loads(self.invoke('add'))['id'], json.loads(self.invoke('add'))['id']
+        output = self.invoke('reset')
+        self.assertIn('2 dynamic environment(s) removed', output)
+        self.assertEqual(['shop'], [item['subdomain'] for item in control.environments()])
+        self.assertTrue((control.PROJECTS / 'shop').is_dir())
+        for identity in (first, second):
+            self.assertFalse((control.PROJECTS / '_environments' / identity).exists())
+        self.assertIn('0 dynamic environment(s) removed', self.invoke('reset'))
+
     def test_commands_accept_a_subdomain_instead_of_the_id(self):
         (control.PROJECTS / 'site').mkdir()
         identity = json.loads(self.invoke('add', '--subdomain', ['site', 'shop'][0], '--alias', 'shop'))['id']

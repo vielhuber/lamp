@@ -94,6 +94,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `./lamp curl <id\|subdomain> -- <curl args>`                                       | curl the environment's exact https origin with the access service token                                                                                                  |
 | `./lamp access <id\|subdomain>`                                                    | origin and access headers as json; secret, for trusted integrations only                                                                                                 |
 | `./lamp remove <id\|subdomain>`                                                    | remove environment, owned databases, runtime data; dynamic project directory only                                                                                        |
+| `./lamp reset`                                                                     | remove every dynamic environment with its checkout and isolated databases; static environments stay (not `docker-reset`)                                                 |
 | `./lamp ssh [<id\|subdomain>]`                                                     | interactive root shell in the container; with an environment: in its project directory with its variables, `git status` first                                            |
 | `./lamp cloudflare-setup`                                                          | create or verify tunnel, wildcard dns, access application, service token and cache rule; prints `ok`, `created`, `updated`, `rotated` or `recreated` per item            |
 | `./lamp docker-build`                                                              | rebuild the image without layer cache, keep volumes (requires stopped container)                                                                                         |
@@ -282,7 +283,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `.config/env.yaml` is a list of the static environments, without ids; `start` / `restart` reconcile it, `add --subdomain` appends to it, `remove` deletes from it
 - an entry and a running environment are the same when every value matches; changing any value in the file removes the old environment and provisions a new one; static directories and fixed databases stay
-- dynamic environments (`add` without `--subdomain`) live in the runtime state only, are never written to the file and are never touched by `start` / `restart`; remove them with `lamp remove <id>`
+- dynamic environments (`add` without `--subdomain`) live in the runtime state only, are never written to the file and are never touched by `start` / `restart`; remove them with `lamp remove <id>` or all at once with `lamp reset`
 - ids are runtime identifiers reported by `add`, `show` and `list`; `add --id` reuses one and is idempotent: identical settings return the existing environment, different settings fail; every command that takes an id also accepts a subdomain label of a static environment
 - a file from the previous id-keyed format is converted on first use; its dynamic entries are dropped from the file, the environments themselves stay
 
