@@ -232,15 +232,14 @@ class EnvironmentSetupTest(unittest.TestCase):
                 self.invoke('add', *arguments)
         dynamic = json.loads(self.invoke('add'))
         environment = [item for item in control.environments() if item['id'] == dynamic['id']][0]
-        (control.CONFIGURATION / 'settings.yaml').write_text('syncdb:\n  domains: [other.test]\n')
-        (control.CONFIGURATION / 'syncdb' / 'dynamic.json').write_text(json.dumps({'engine': 'mysql', 'source': {}, 'replace': {
-            'https://www.blog.com': 'https://blog.example.test', '@blog.example.test': '@www.blog.com', 'keep.example.com': 'keep.example.com',
-            'cdn.blog.com': 'blog.other.test'}}))
+        (control.CONFIGURATION / 'syncdb' / 'blog-production-local.json').write_text(json.dumps({'engine': 'mysql', 'source': {}, 'replace': {
+            'https://www.blog.com': 'https://blog.other.test', '@blog.other.test': '@www.blog.com', 'shop.blog.com': 'blog-shop.other.test',
+            'smtp.blog.com': 'sslout.provider.test', 'wp-fastest-cache': 'wpfastestcache.off', 'blog.sub.production.com': 'blog.other.test'}}))
         with patch.object(control, 'run_sync') as sync:
-            control.sync_database(environment, 'dynamic')
+            control.sync_database(environment, 'blog-production-local')
         hostname = dynamic['id'] + '.example.test'
-        self.assertEqual({'https://www.blog.com': 'https://' + hostname, '@' + hostname: '@www.blog.com', 'keep.example.com': 'keep.example.com',
-                          'cdn.blog.com': hostname},
+        self.assertEqual({'https://www.blog.com': 'https://' + hostname, '@' + hostname: '@www.blog.com', 'shop.blog.com': dynamic['id'] + '-shop.example.test',
+                          'smtp.blog.com': 'sslout.provider.test', 'wp-fastest-cache': 'wpfastestcache.off', 'blog.sub.production.com': hostname},
                          sync.call_args.args[1]['replace'])
         self.assertEqual('lamp_' + dynamic['id'], sync.call_args.args[1]['target']['database'])
         (control.PROJECTS / 'plain').mkdir()

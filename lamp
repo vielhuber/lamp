@@ -228,10 +228,6 @@ php:
 # database:
 #     password: '<PASSWORD>'
 
-# optional: domains of other lamp instances sharing this data, so their hostnames in syncdb replace rules are rewritten for dynamic environments too
-# syncdb:
-#     domains: [other-instance.example.com]
-
 # optional: vpn tunnels; profiles live in .data/vpn/, names are lowercase, at most twelve characters, letter first
 # vpn:
 #     enabled: true

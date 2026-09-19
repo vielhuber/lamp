@@ -87,18 +87,14 @@ def configuration():
     value = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
     sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname", "relayhost", "username", "password"),
                 "cloudflare": ("token", "email"), "database": ("password",), "composer": ("github",)}
-    if (not isinstance(value, dict) or set(value) - {"vpn", "php", "syncdb", *sections}
-            or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", "php", "syncdb", *sections))):
-        raise ValueError("settings.yaml may contain only git, apache, postfix, cloudflare, database, composer, php, syncdb and vpn mappings; the domain belongs in setup.yaml; see README.md.")
+    if (not isinstance(value, dict) or set(value) - {"vpn", "php", *sections}
+            or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", "php", *sections))):
+        raise ValueError("settings.yaml may contain only git, apache, postfix, cloudflare, database, composer, php and vpn mappings; the domain belongs in setup.yaml; see README.md.")
     value["domain"] = setup["domain"]
     php = value.get("php") or {}
     if set(php) - {"xdebug"} or any(not isinstance(entry, bool) for entry in php.values()):
         raise ValueError("php may contain only xdebug: true or false.")
     dns_name = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
-    syncdb = value.get("syncdb") or {}
-    if (set(syncdb) - {"domains"} or not isinstance(syncdb.get("domains", []), list)
-            or any(not isinstance(entry, str) or not re.fullmatch(dns_name, entry) for entry in syncdb.get("domains", []))):
-        raise ValueError("syncdb may contain only domains, a list of the domains of the lamp instances that share the profiles.")
     domain = value["domain"]
     if not isinstance(domain, str) or len(domain) > 240 or not re.fullmatch(dns_name, domain):
         raise ValueError("domain must be a lowercase DNS name without scheme, path or port.")
@@ -879,14 +875,15 @@ def sync_database(environment, profile_name):
         run_sync(environment, profile)
         return
     environment["engine"] = profile["engine"]
-    # Profiles are written for a static environment, maybe of another instance that shares the data (syncdb.domains);
-    # every lamp hostname in the replace rules becomes this environment's hostname.
-    hostname = environment["hostname"]
-    domains = [hostname.split(".", 1)[1], *((configuration().get("syncdb") or {}).get("domains") or [])]
-    lamp_hostname = re.compile(r"\b[a-z0-9-]+\.(?:" + "|".join(re.escape(domain) for domain in domains) + r")\b")
+    # A profile <project>-<source>-<target> is written for the static site <project>.<domain> of some instance. Its hostnames
+    # in the replace targets, whatever their domain, become this environment's hostnames; alias suffixes (<project>-<suffix>) stay.
+    identity, domain = environment["hostname"].split(".", 1)
+    static_hostname = re.compile(r"(?<![A-Za-z0-9.-])" + re.escape(profile_name.rsplit("-", 2)[0])
+                                 + r"((?:-[a-z0-9-]+)?)\.(?:[a-z0-9-]+\.)+[a-z]{2,}(?![A-Za-z0-9-])")
     if isinstance(profile.get("replace"), dict):
-        profile["replace"] = {lamp_hostname.sub(hostname, key): lamp_hostname.sub(hostname, value) if isinstance(value, str) else value
-                              for key, value in profile["replace"].items()}
+        targets = {match[0] for value in profile["replace"].values() if isinstance(value, str) for match in static_hostname.finditer(value)}
+        rewrite = lambda text: static_hostname.sub(lambda match: identity + match[1] + "." + domain if match[0] in targets else match[0], text)
+        profile["replace"] = {rewrite(key): rewrite(value) if isinstance(value, str) else value for key, value in profile["replace"].items()}
     name = "lamp_" + environment["id"]
     if environment["engine"] == "mysql":
         profile["target"] = {"host": "localhost", "port": "3306", "database": name,

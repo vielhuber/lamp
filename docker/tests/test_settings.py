@@ -44,7 +44,7 @@ class SettingsTest(unittest.TestCase):
                      'postfix: {relayhost: "smtp://x"}', 'postfix: {relayhost: "[a.test]:587", username: "u"}',
                      'postfix: {username: "u", password: "p"}', 'cloudflare: {token: t}', 'cloudflare: {token: "a b", email: x@y}',
                      'cloudflare: {token: t, email: nomail}', 'database: {user: x}', 'database: {password: ""}', 'php: {xdebug: "no"}',
-                     'php: {jit: true}', 'syncdb: {domains: example.test}', 'syncdb: {domains: ["Bad Domain"]}', 'syncdb: {hosts: []}', 'composer: {token: x}', 'composer: {github: "a b"}', 'unknown: 1', 'domain: example.test']:
+                     'php: {jit: true}', 'composer: {token: x}', 'composer: {github: "a b"}', 'unknown: 1', 'syncdb: {domains: []}', 'domain: example.test']:
             with self.subTest(text=text), self.assertRaises(ValueError):
                 (self.root / 'settings.yaml').write_text(text + '\n')
                 control.configuration()
