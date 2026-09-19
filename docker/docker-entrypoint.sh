@@ -41,4 +41,4 @@ if [[ "$(id -u)" -eq 0 ]]; then
     chown -hR "$(stat -c '%u:%g' /install)" /install/.config /install/docker/docker-compose.override.yml
 fi
 
-printf 'lamp initialized. adjust .config/env.yaml and docker/docker-compose.override.yml if needed, then run ./lamp start.\n'
+printf '%s\n' '📦 lamp is installed in this folder' '👉 next: list your projects in .config/env.yaml if you like, then ./lamp start'

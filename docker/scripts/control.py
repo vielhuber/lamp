@@ -191,7 +191,7 @@ def ensure_certificate(settings):
     if (LETSENCRYPT / "live" / domain / "fullchain.pem").exists():
         run(["certbot", "renew", "--non-interactive", "--quiet"], output=sys.stderr)
         return
-    print(f"Requesting the Let's Encrypt certificate for {domain} and *.{domain}.", file=sys.stderr)
+    print(f"🔒 requesting the let's encrypt certificate for {domain} and *.{domain}", file=sys.stderr)
     run(["certbot", "certonly", "--non-interactive", "--agree-tos", "--email", settings["cloudflare"]["email"], "--dns-cloudflare",
          "--dns-cloudflare-credentials", str(credentials), "--dns-cloudflare-propagation-seconds", "30",
          "--cert-name", domain, "-d", domain, "-d", "*." + domain], output=sys.stderr)
@@ -349,7 +349,7 @@ def ensure_vpn(name):
         raise RuntimeError("Cannot determine the required VPN process state; details withheld.")
     if int(status.stdout.strip()) > 0:
         return
-    print(f"Starting required VPN {name}.", file=sys.stderr)
+    print(f"🔐 starting the required vpn {name}", file=sys.stderr)
     run(["supervisorctl", "start", "vpn-" + name])
     if int(run(command, capture=True).strip()) <= 0:
         raise RuntimeError("The required VPN process did not start.")
@@ -1109,10 +1109,11 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
             else:
                 batch["reload"] = True
         os.umask(0o022)
-        print(f"{hostname} [{identity}] {project}: {reason}", file=sys.stderr)
+        if reason != "build requested":
+            print(f"🌐 {hostname} → {project} ({reason})", file=sys.stderr)
         git_environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": "ssh -o BatchMode=yes"}
         if project_owned and arguments.git is not None and not (project / ".git").exists():
-            print(f"{hostname} [{identity}] {project}: cloning {arguments.git}", file=sys.stderr)
+            print(f"📥 {hostname}: cloning {arguments.git}", file=sys.stderr)
             clone = ["git", "clone"]
             branch = arguments.branch
             if branch and getattr(arguments, "base_branch", None):
@@ -1154,7 +1155,8 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         # Adopted directories are never built automatically; lamp build <id> is the explicit way.
         if build is not None and (project_owned or force_build):
             log = directory / "build.log"
-            print(f"{hostname} [{identity}] {project}: building, log {log}", file=sys.stderr)
+            print(f"🔨 {hostname}: building in {project} · log: {log}", file=sys.stderr)
+            started = time.monotonic()
             with log.open("wb") as handle:
                 os.umask(0o022)
                 try:
@@ -1187,6 +1189,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
             # Services declared by the build in $LAMP_DATA_DIR/supervisor.conf start, restart or stop here.
             run(["supervisorctl", "reread"])
             run(["supervisorctl", "update"])
+            print(f"✅ {hostname}: built in {round(time.monotonic() - started)}s · {environment['url']}", file=sys.stderr)
         os.umask(0o077)
         environment["document_root"] = str(project)
         for subdirectory in ("public", "web"):
@@ -1231,7 +1234,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
                 pass
         else:
             batch["reload"] = True
-        print(f"Environment {identity} failed; correct its YAML settings and restart, or remove it.", file=sys.stderr)
+        print(f"❌ environment {identity} failed; correct its yaml settings and restart, or remove it", file=sys.stderr)
         raise
     return show(environment)
 
@@ -1497,7 +1500,8 @@ def main():
             return
         elif arguments.command == "sync":
             run_profile(arguments.profile)
-            result = {"profile": arguments.profile, "status": "imported"}
+            print(f"✅ {arguments.profile} imported")
+            return
         elif arguments.command == "build":
             identity = validate_identity(arguments.id)
             environment = load_environment(identity)
@@ -1505,7 +1509,9 @@ def main():
                 raise ValueError("Environment is not listed in env.yaml; add its entry or remove the environment.")
             if resolve_build(desired[identity])[0] is None:
                 raise ValueError("Environment has no build; add a repository script in .data/build or a build setting.")
-            result = add(argparse.Namespace(**desired[identity]), settings, identity, environment, force_build=True, reason="build requested")
+            # the build reports itself in one line; lamp show <id> prints the details
+            add(argparse.Namespace(**desired[identity]), settings, identity, environment, force_build=True, reason="build requested")
+            return
         else:
             identity = validate_identity(arguments.id)
             applied = specification(load_environment(identity))
@@ -1521,9 +1527,9 @@ if __name__ == "__main__":
         main()
     except (OSError, ValueError, RuntimeError, yaml.YAMLError) as error:
         if isinstance(error, OSError):
-            print("LAMP filesystem/process error; check configuration, profile files and permissions.", file=sys.stderr)
+            print("❌ lamp filesystem/process error; check configuration, profile files and permissions", file=sys.stderr)
         elif isinstance(error, (json.JSONDecodeError, yaml.YAMLError)):
-            print("Invalid JSON/YAML configuration.", file=sys.stderr)
+            print("❌ invalid json/yaml configuration", file=sys.stderr)
         else:
-            print(str(error), file=sys.stderr)
+            print("❌ " + str(error), file=sys.stderr)
         sys.exit(1)

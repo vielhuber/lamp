@@ -142,4 +142,4 @@ try:
             configuration.chmod(0o600)
     print(f"VPN configuration valid: {len(names)} manual tunnel(s); no connection started.")
 except (OSError, ValueError, TypeError, yaml.YAMLError):
-    raise SystemExit("Invalid VPN configuration; check settings.yaml under vpn and private profiles. Details withheld to protect credentials.") from None
+    raise SystemExit("❌ Invalid VPN configuration; check settings.yaml under vpn and private profiles. Details withheld to protect credentials.") from None

@@ -178,14 +178,14 @@ def main():
         raise SystemExit("Usage: cloudflare.py setup")
     results = setup(control.configuration(), control.STATE / "cloudflare")
     for name, status in results.items():
-        print(f"{name}: {status}")
+        print(f"☁️ {name}: {status}")
     if any(status != "ok" for status in results.values()):
-        print("next: ./lamp restart")
+        print("👉 next: ./lamp restart")
 
 
 if __name__ == "__main__":
     try:
         main()
     except (OSError, ValueError, RuntimeError, yaml.YAMLError) as error:
-        print(str(error) if not isinstance(error, OSError) else "LAMP filesystem error; check /var/lib/lamp/cloudflare permissions.", file=sys.stderr)
+        print("❌ " + (str(error) if not isinstance(error, OSError) else "lamp filesystem error; check /var/lib/lamp/cloudflare permissions"), file=sys.stderr)
         sys.exit(1)

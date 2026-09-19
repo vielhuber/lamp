@@ -181,10 +181,10 @@ class EnvironmentSetupTest(unittest.TestCase):
             environment[key] = None
         environment['mysql_owned'] = environment['postgres_owned'] = environment['databases_ready'] = False
         control.save_environment(environment)
-        result = json.loads(self.invoke('build', identity))
+        self.assertEqual('', self.invoke('build', identity))
         environment = control.load_environment(identity)
         self.assertEqual('built', (project / 'build-result.txt').read_text())
-        self.assertEqual('ready', result['status'])
+        self.assertEqual('ready', environment['status'])
         self.assertTrue(environment['databases_ready'])
         self.assertTrue(Path(environment['setup_environment']).is_file())
         (project / 'build-result.txt').unlink()
@@ -270,7 +270,7 @@ class EnvironmentSetupTest(unittest.TestCase):
                 seen['profile'] = (control.STATE / 'syncdb' / 'shop-production-local.json').read_text()
             return ''
         self.run.side_effect = capture
-        self.assertEqual({'profile': 'shop-production-local', 'status': 'imported'}, json.loads(self.invoke('sync', 'shop-production-local')))
+        self.assertEqual('✅ shop-production-local imported\n', self.invoke('sync', 'shop-production-local'))
         self.assertEqual('shop-production-local', seen['arguments'][-1])
         self.assertEqual('{"target": {"database": "shop", "password": "root"}}', seen['profile'])
         self.assertFalse((control.STATE / 'syncdb' / 'shop-production-local.json').exists())

@@ -316,7 +316,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - `lamp branch <id> <branch>` switches the checkout and updates the entry's `branch` in the file, so the environment keeps matching
 - failed environments keep status `failed` and are not served; fix the yaml and `restart`, or `build <id>`, or `remove`
 - `docker-reset` deletes the runtime state: static environments are re-registered from the file on the next `start`, dynamic environments are gone and their directories under `/var/www/_environments/` become orphans
-- `show`, `list`, `add`, `build <id>` return json without passwords or build commands
+- `show`, `list` and `add` return json without passwords or build commands; `build <id>` and `syncdb <profile>` print their output live and end with one status line
 
 </details>
 
@@ -327,7 +327,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - `.data/build/<host>-<repository path with / replaced by ->.sh`, e.g. `github.com-owner-project.sh` for `git@github.com:owner/project.git` and `https://github.com/owner/project.git`
 - sourced by bash with `set -e` in the checkout, the selected php first on `PATH`, node lts, the variables below and a `syncdb` function
 - runs when lamp clones the project, when a cloned project's settings or script change, and on `./lamp build <id>`; adopted directories are only built by `./lamp build <id>`
-- complete output goes to `/var/lib/lamp/environments/<id>/build.log` (mode 600); the path is printed at start and in the failure message
+- complete output goes to `/var/lib/lamp/environments/<id>/build.log` (mode 600); the path is printed at start and in the failure message; `./lamp build <id>` shows it live between `🔨 … building` and `✅ … built in <n>s`
 - no build runs without a script or `build` setting
 - `./lamp docker-setup` writes the example `.data/build/github.com-owner-project.sh`: syncdb import, `.env` created from an embedded heredoc with `APP_URL` and `DB_*` rewritten from the setup variables, then composer and npm; copy it per project and keep only the steps the project has
 
@@ -510,6 +510,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>logs and debugging</summary>
 
 - `.logs/<command>-<timestamp>-<random>.log` for `docker-build`, `docker-reset`, `start`, `restart` (ansi stripped, exit code included, container output since the start request appended)
+- `start` and `restart` print only status lines on the terminal (each begins with an emoji: what is being done, every applied environment, `✅` or `❌` with the reason); everything else, including builds of cloned environments, is in that log
 - `./lamp exec 'supervisorctl status'`; php errors in `/var/log/php-error.log`; xdebug profiles in `/tmp/xdebug` (`?XDEBUG_PROFILE=1` or `XDEBUG_PROFILE=1 php …`)
 - vpn client logs in `/var/log/supervisor/vpn-<name>.log`
 - project build logs in `/var/lib/lamp/environments/<id>/build.log`

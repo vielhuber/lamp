@@ -36,7 +36,7 @@ case "$command" in
     exec) test "$#" -ge 1 && test "$#" -le 2 ;;
     curl|branch) ;;
     add) ;;
-    *) printf 'Unknown command: %s\n' "$command" >&2; exit 2 ;;
+    *) printf '❌ Unknown command: %s\n' "$command" >&2; exit 2 ;;
 esac
 compose=(docker compose --ansi never --progress plain --project-directory "$directory/docker" -f "$directory/docker/docker-compose.yml")
 configured_data_repository() {
@@ -49,7 +49,7 @@ configured_data_repository() {
 read_data_key() {
     local line
     if ! { : < /dev/tty; } 2> /dev/null; then
-        printf 'The first clone of %s needs a terminal to ask for a private ssh key.\n' "$data_repository" >&2
+        printf '❌ The first clone of %s needs a terminal to ask for a private ssh key.\n' "$data_repository" >&2
         exit 1
     fi
     stty -echo < /dev/tty
@@ -75,8 +75,14 @@ sync_data() {
             # git keeps no private modes; ssh refuses keys that others can read
             chmod -R go= /var/lib/lamp/data
         else
-            printf "Warning: the data repository could not be fetched; continuing with the last state.\n" >&2
+            exit 4
         fi' < /dev/null || data_result=$?
+    if [[ "$data_result" = 4 ]]; then
+        printf '⚠️ the data repository %s could not be fetched; continuing with the last state\n' "$data_repository" >&2
+        data_result=0
+    elif [[ "$data_result" = 0 && ( "$command" = start || "$command" = restart ) ]]; then
+        printf '📦 data is up to date with %s\n' "$data_repository"
+    fi
     if [[ "$data_result" = 3 ]]; then
         if [[ -z "${data_key:-}" ]]; then read_data_key; fi
         data_result=0
@@ -88,10 +94,10 @@ sync_data() {
             chmod -R go= /var/lib/lamp/data' lamp "$data_repository" || data_result=$?
         data_key=
         if [[ "$data_result" != 0 ]]; then
-            printf 'The data repository could not be cloned with this key.\n' >&2
+            printf '❌ The data repository could not be cloned with this key.\n' >&2
             exit 1
         fi
-        printf 'cloned  %s\n' "$data_repository"
+        printf '📦 cloned %s\n' "$data_repository"
     elif [[ "$data_result" != 0 ]]; then
         exit "$data_result"
     fi
@@ -100,12 +106,12 @@ preset() {
     local path=$1 mode=$2
     if [[ -e "$path" ]]; then
         cat > /dev/null
-        printf 'kept    %s\n' "${path#"$directory/"}"
+        printf '📝 kept %s\n' "${path#"$directory/"}"
         return
     fi
     (umask 077; cat > "$path")
     chmod "$mode" "$path"
-    printf 'created %s\n' "${path#"$directory/"}"
+    printf '📝 created %s\n' "${path#"$directory/"}"
 }
 # files of this host that can be edited before the first start; init writes them right away
 write_presets() {
@@ -174,7 +180,7 @@ docker_setup() {
         read -r -p 'Domain of the environments (https://<subdomain>.<domain>): ' domain < /dev/tty
         read -r -p 'Private git repository with the data of this instance (ssh url, empty for a local .data folder): ' data_repository < /dev/tty
         if [[ -n "$data_repository" && ! "$data_repository" =~ ^git@[A-Za-z0-9.-]+:[A-Za-z0-9_./-]+$ ]]; then
-            printf '%s\n' 'The data repository must be an ssh url like git@github.com:<owner>/lamp-data.git.' >&2
+            printf '%s\n' '❌ The data repository must be an ssh url like git@github.com:<owner>/lamp-data.git.' >&2
             exit 2
         fi
         if [[ -n "$data_repository" ]]; then read_data_key; fi
@@ -310,9 +316,9 @@ PRESET
     fi
     if [[ -n "$data_repository" ]]; then
         sync_data
-        if [[ "$command" = docker-setup ]]; then printf '%s\n' 'next: ./lamp start'; fi
+        if [[ "$command" = docker-setup ]]; then printf '%s\n' '👉 next: ./lamp start'; fi
     else
-        printf '%s\n' 'next: set cloudflare.token and cloudflare.email in .data/settings.yaml, then ./lamp start'
+        printf '%s\n' '👉 next: set cloudflare.token and cloudflare.email in .data/settings.yaml, then ./lamp start'
     fi
 }
 if [[ "$command" = docker-setup ]]; then
@@ -333,7 +339,15 @@ if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = sta
     chmod 700 "$directory/.logs"
     log_file=$(mktemp "$directory/.logs/$command-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX.log")
     exec 3>&1 4>&2
-    exec > >(LC_ALL=C sed -u $'s/\033\\[[0-?]*[ -/]*[@-~]//g;s/\r/\\n/g' | tee -a "$log_file" >&3) 2>&1
+    # start and restart show only the status lines, which begin with an emoji; the complete output goes to the log
+    terminal_lines() {
+        if [[ "$command" = start || "$command" = restart ]]; then
+            LC_ALL=C grep --line-buffered -E '^(🚀|🐳|🌐|📥|🔨|📦|🔐|⚠️|✅|❌|👉)' || true
+        else
+            cat
+        fi
+    }
+    exec > >(LC_ALL=C sed -u $'s/\033\\[[0-?]*[ -/]*[@-~]//g;s/\r/\\n/g' | tee -a "$log_file" | terminal_lines >&3) 2>&1
     log_process=$!
     finish_log() {
         local result=$1 logs_result
@@ -347,11 +361,18 @@ if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = sta
             "${compose[@]}" ps --all
         fi
         printf "\n[%s] %s finished (exit %s, elapsed %ss)\n" "$(date -u +%FT%TZ)" "$command" "$result" "$SECONDS"
+        if [[ "$result" = 0 ]]; then
+            printf '✅ %s finished in %ss\n' "$command" "$SECONDS"
+        else
+            # a container that did not come up explains itself in its last lines
+            if [[ "${phase:-}" = container ]]; then "${compose[@]}" logs --no-color --no-log-prefix --tail 5 app 2>&1 | sed 's/^/❌   /'; fi
+            printf '❌ %s failed (exit %s) after %ss · full log: %s\n' "$command" "$result" "$SECONDS" "$log_file"
+        fi
         exec 1>&3 2>&4 3>&- 4>&-
         wait "$log_process"
         logs_result=$?
         if [[ "$logs_result" != 0 ]]; then
-            printf "Could not finish writing log: %s\n" "$log_file" >&2
+            printf "❌ Could not finish writing log: %s\n" "$log_file" >&2
             if [[ "$result" = 0 ]]; then result=$logs_result; fi
         fi
         exit "$result"
@@ -360,6 +381,8 @@ if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = sta
     trap 'finish_log 130' INT
     trap 'finish_log 143' TERM
     printf '[%s] %s started\nLog: %s\n' "$(date -u +%FT%TZ)" "$command" "$log_file"
+    if [[ "$command" = start ]]; then printf '🚀 starting lamp · full log: %s\n' "$log_file"; fi
+    if [[ "$command" = restart ]]; then printf '🚀 restarting lamp · full log: %s\n' "$log_file"; fi
 fi
 export LAMP_CONFIG_DIR="$directory/.config"
 # interactive calls get a terminal inside the container (progress bars); piped calls stay plain
@@ -386,7 +409,7 @@ if [[ "$command" = status || "$command" = version ]]; then
         printf 'Source version: %s\n' "$revision"
     fi
     if ! container_id=$("${compose[@]}" ps --all --quiet app); then
-        printf 'Container information unavailable: Docker/Compose query failed.\n' >&2
+        printf '❌ Container information unavailable: Docker/Compose query failed.\n' >&2
         exit 1
     fi
     if [[ -z "$container_id" ]]; then
@@ -411,7 +434,7 @@ if [[ "$command" = status || "$command" = version ]]; then
     exit 0
 fi
 if [[ ! -f "$LAMP_CONFIG_DIR/setup.yaml" || ! -f "$directory/docker/docker-compose.override.yml" ]]; then
-    printf '%s\n' 'Missing .config/setup.yaml or docker/docker-compose.override.yml. Run ./lamp docker-setup first.' >&2
+    printf '%s\n' '❌ Missing .config/setup.yaml or docker/docker-compose.override.yml. Run ./lamp docker-setup first.' >&2
     exit 1
 fi
 chmod 700 "$LAMP_CONFIG_DIR"
@@ -435,17 +458,17 @@ case "$command" in
         case "$container_state" in
             running|restarting|paused)
                 if [[ "$command" != stop && "$command" != restart ]]; then
-                    printf 'Cannot %s: LAMP is already active. Run lamp stop first.\n' "$command" >&2
+                    printf '❌ Cannot %s: LAMP is already active. Run lamp stop first.\n' "$command" >&2
                     exit 1
                 fi
                 ;;
             ''|created|exited|dead)
                 if [[ "$command" = stop ]]; then
-                    printf 'Cannot stop: LAMP is not running.\n' >&2
+                    printf '❌ Cannot stop: LAMP is not running.\n' >&2
                     exit 1
                 fi
                 ;;
-            *) printf 'Cannot %s: unexpected LAMP container state (%s).\n' "$command" "$container_state" >&2; exit 1 ;;
+            *) printf '❌ Cannot %s: unexpected LAMP container state (%s).\n' "$command" "$container_state" >&2; exit 1 ;;
         esac
         ;;
 esac
@@ -470,9 +493,16 @@ case "$command" in
             "${compose[@]}" exec -T app python3 /opt/lamp/vpn.py validate
             "${compose[@]}" exec -T app python3 /opt/lamp/control.py validate
         fi
-        if [[ "$command" = restart ]]; then "${compose[@]}" stop; fi
+        if [[ "$command" = restart ]]; then
+            printf '🐳 stopping the container\n'
+            "${compose[@]}" stop
+        fi
         start_since=$(date -u +%FT%TZ)
+        phase=container
+        printf '🐳 starting the container: databases, settings, cloudflare tunnel and certificate (a first start takes a few minutes)\n'
         "${compose[@]}" up -d --no-build --wait --wait-timeout 240
+        printf '🐳 container is healthy, applying .config/env.yaml\n'
+        phase=environments
         "${compose[@]}" exec -T app python3 /opt/lamp/control.py reconcile
         ;;
     stop) "${compose[@]}" stop ;;
