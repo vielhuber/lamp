@@ -446,11 +446,18 @@ if [[ -z "$data_repository" ]]; then compose+=(-f "$directory/docker/docker-comp
 if [[ "$command" = start || "$command" = add ]] && ! git config --global --get-all safe.directory | grep -qx '\*'; then
     git config --global --add safe.directory '*'
 fi
+# commands that change the container as a whole run alone; work on environments runs side by side and is
+# ordered inside the container (control.lock for shared state, one lock per environment)
+lock_identity=$(printf '%s' "$directory" | sha256sum)
+lock_file="/tmp/lamp-${lock_identity%% *}.lock"
 case "$command" in
-    build|syncdb|docker-build|docker-reset|start|restart|stop|add|remove|reset)
-        lock_identity=$(printf '%s' "$directory" | sha256sum)
-        exec 9>> "/tmp/lamp-${lock_identity%% *}.lock"
+    docker-build|docker-reset|start|restart|stop)
+        exec 9>> "$lock_file"
         flock 9
+        ;;
+    build|syncdb|add|remove|reset)
+        exec 9>> "$lock_file"
+        flock --shared 9
         ;;
 esac
 case "$command" in
@@ -475,7 +482,13 @@ case "$command" in
 esac
 if [[ -n "$data_repository" ]]; then
     case "$command" in
-        start|restart|cloudflare-setup|build|syncdb|add) sync_data ;;
+        start|restart|cloudflare-setup|build|syncdb|add)
+            # parallel commands must not fetch into the same clone at once
+            exec 8>> "$lock_file.data"
+            flock 8
+            sync_data
+            flock --unlock 8
+            ;;
     esac
 fi
 if [[ -z "$data_repository" ]]; then

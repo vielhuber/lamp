@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
 import fcntl
 import fnmatch
 import hashlib
@@ -1053,6 +1054,32 @@ def ensure_connector(settings):
          "--retry-delay", "1", "--max-time", "2", "--retry-max-time", "60", "http://127.0.0.1:20246/ready"])
 
 
+CONTROL_LOCK = None
+
+
+@contextlib.contextmanager
+def unlocked():
+    """Release control.lock for long work on a single environment (clone, import, build), so other environments are not held up."""
+    if CONTROL_LOCK is None:
+        yield
+        return
+    fcntl.flock(CONTROL_LOCK, fcntl.LOCK_UN)
+    try:
+        yield
+    finally:
+        fcntl.flock(CONTROL_LOCK, fcntl.LOCK_EX)
+
+
+@contextlib.contextmanager
+def environment_lock(identity):
+    """One writer per environment. It is always taken without control.lock, so a build that wants control.lock back never deadlocks."""
+    (STATE / "locks").mkdir(mode=0o700, exist_ok=True)
+    with (STATE / "locks" / identity).open("w") as handle:
+        with unlocked():
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
 def add(arguments, settings, identity, current=None, *, force_build=False, reason="creating", batch=None):
     # batch collects deferred work of a reconcile run: one apache reload and one php-fpm restart per version at the end,
     # access checks and the connector are handled once by the caller.
@@ -1068,6 +1095,8 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         sync_visibility(settings, {identity: desired}, identities={identity}, publish=False)
     project_owned = current.get("project_owned", False) if current else not project.exists()
     build, build_hash = resolve_build(desired)
+    # a reconcile run keeps control.lock; a single add or build gives it up while it clones, imports and builds
+    long_work = unlocked if batch is None else contextlib.nullcontext
     ensure_vpn(desired["vpn"])
     if batch is None or not batch.get("connected"):
         ensure_connector(settings)
@@ -1133,7 +1162,8 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
                     branch = arguments.base_branch
             if branch:
                 clone += ["--branch", branch]
-            run(clone + ["--", arguments.git, str(project)], environment=git_environment)
+            with long_work():
+                run(clone + ["--", arguments.git, str(project)], environment=git_environment)
             if arguments.branch and branch != arguments.branch:
                 run(["git", "switch", "--create", arguments.branch], cwd=project)
         elif project_owned and arguments.git and checkout and any(checkout[key] != desired[key] for key in ("git", "branch")):
@@ -1145,7 +1175,8 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
                     raise ValueError("Cannot resolve the repository's default branch.")
                 branch = matches[0]
                 run(["git", "check-ref-format", "--branch", branch])
-            run(["git", "fetch", "--no-tags", arguments.git, "refs/heads/" + branch], cwd=project, environment=git_environment)
+            with long_work():
+                run(["git", "fetch", "--no-tags", arguments.git, "refs/heads/" + branch], cwd=project, environment=git_environment)
             run(["git", "checkout", "--no-overwrite-ignore", "-B", branch, "FETCH_HEAD"], cwd=project)
             run(["git", "remote", "set-url", "origin", arguments.git], cwd=project)
             run(["git", "update-ref", "refs/remotes/origin/" + branch, "HEAD"], cwd=project)
@@ -1170,33 +1201,34 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
             started = time.monotonic()
             with log.open("wb") as handle:
                 os.umask(0o022)
-                try:
-                    # The build runs on a pseudo-terminal, so tools show progress (pv, npm) as they would interactively;
-                    # the complete output goes to the log and to the terminal at the same time.
-                    master, slave = pty.openpty()
-                    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 160, 0, 0))
-                    # set -x after setup.env: every build command is echoed, the variable exports are not
-                    process = subprocess.Popen(["bash", "-c", "set -e\nsource " + shlex.quote(environment["setup_environment"]) + "\nset -x\n" + build],
-                                               cwd=project, env={**os.environ, "TERM": "xterm-256color", **variables},
-                                               stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, close_fds=True)
-                    os.close(slave)
+                with long_work():
                     try:
-                        while True:
-                            try:
-                                chunk = os.read(master, 65536)
-                            except OSError:
-                                break
-                            if not chunk:
-                                break
-                            handle.write(chunk)
-                            sys.stderr.buffer.write(chunk)
-                            sys.stderr.buffer.flush()
+                        # The build runs on a pseudo-terminal, so tools show progress (pv, npm) as they would interactively;
+                        # the complete output goes to the log and to the terminal at the same time.
+                        master, slave = pty.openpty()
+                        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 160, 0, 0))
+                        # set -x after setup.env: every build command is echoed, the variable exports are not
+                        process = subprocess.Popen(["bash", "-c", "set -e\nsource " + shlex.quote(environment["setup_environment"]) + "\nset -x\n" + build],
+                                                   cwd=project, env={**os.environ, "TERM": "xterm-256color", **variables},
+                                                   stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, close_fds=True)
+                        os.close(slave)
+                        try:
+                            while True:
+                                try:
+                                    chunk = os.read(master, 65536)
+                                except OSError:
+                                    break
+                                if not chunk:
+                                    break
+                                handle.write(chunk)
+                                sys.stderr.buffer.write(chunk)
+                                sys.stderr.buffer.flush()
+                        finally:
+                            os.close(master)
+                        if process.wait():
+                            raise RuntimeError(f"bash failed (exit {process.returncode}). Build log: {log}")
                     finally:
-                        os.close(master)
-                    if process.wait():
-                        raise RuntimeError(f"bash failed (exit {process.returncode}). Build log: {log}")
-                finally:
-                    environment = load_environment(identity)
+                        environment = load_environment(identity)
             # Services declared by the build in $LAMP_DATA_DIR/supervisor.conf start, restart or stop here.
             run(["supervisorctl", "reread"])
             run(["supervisorctl", "update"])
@@ -1265,6 +1297,7 @@ def remove(identity):
         shutil.rmtree(project)
     (SITES / name).unlink(missing_ok=True)
     shutil.rmtree(STATE / "environments" / identity)
+    (STATE / "locks" / identity).unlink(missing_ok=True)
     sync_hosts()
     run(["supervisorctl", "reread"])
     run(["supervisorctl", "update"])
@@ -1363,8 +1396,10 @@ def main():
         print(json.dumps(result, indent=4))
         return
     settings = configuration()
+    global CONTROL_LOCK
     with (STATE / "control.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        CONTROL_LOCK = lock
         entries, original = read_desired()
         desired = desired_state(entries)
         validate_domains(desired, settings)
@@ -1519,7 +1554,8 @@ def main():
                 raise ValueError("The requested domain is still assigned to an existing environment; reconcile or remove it first.")
             if static:
                 write_desired(entries, original)
-            result = add(arguments, settings, identity)
+            with environment_lock(identity):
+                result = add(arguments, settings, identity)
         elif arguments.command == "reconcile":
             reconcile(settings, desired)
             return
@@ -1527,7 +1563,8 @@ def main():
             # Dynamic environments belong to chats; static ones and their databases stay.
             dynamic = [item for item in environments() if not subdomain_labels(item)]
             for item in dynamic:
-                remove(item["id"])
+                with environment_lock(item["id"]):
+                    remove(item["id"])
                 print(f"🗑️ {item['hostname']} removed ({item.get('git') or 'no repository'})")
             print(f"✅ {len(dynamic)} dynamic environment(s) removed")
             return
@@ -1537,13 +1574,14 @@ def main():
             return
         elif arguments.command == "build":
             identity = validate_identity(arguments.id)
-            environment = load_environment(identity)
+            load_environment(identity)
             if identity not in desired:
                 raise ValueError("Environment is not listed in env.yaml; add its entry or remove the environment.")
             if resolve_build(desired[identity])[0] is None:
                 raise ValueError("Environment has no build; add a repository script in .data/build or a build setting.")
             # the build reports itself in one line; lamp show <id> prints the details
-            add(argparse.Namespace(**desired[identity]), settings, identity, environment, force_build=True, reason="build requested")
+            with environment_lock(identity):
+                add(argparse.Namespace(**desired[identity]), settings, identity, load_environment(identity), force_build=True, reason="build requested")
             return
         else:
             identity = validate_identity(arguments.id)
@@ -1551,7 +1589,8 @@ def main():
             if applied in entries:
                 entries.remove(applied)
                 write_desired(entries, original)
-            result = remove(identity)
+            with environment_lock(identity):
+                result = remove(identity)
         print(json.dumps(result, indent=4))
 
 

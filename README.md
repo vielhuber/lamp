@@ -445,6 +445,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>service token (harness)</summary>
 
 - created by `cloudflare-setup` as `/var/lib/lamp/cloudflare/cloudflare-service-token.yaml`; if the file is lost, a rerun rotates the secret
+- `./lamp curl <id> -- -sS -o /dev/null -w '%{http_code}' https://<hostname>/` (supported options: output, request, header, data, form, timeouts, user agent, cookies, upload, write-out, `-sSfILG`)
 - `./lamp curl <id> -- -fsS https://<hostname>/` and the `curl` wrapper inside `exec <id>` send the headers only to that environment's exact https origin, never follow redirects with credentials, and refuse unsupported options
 - `./lamp access <id>` prints origin and headers as json for trusted integrations; keep it out of visible tool calls and logs
 - public environments send no token; their own application logins still apply
@@ -476,6 +477,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - `lamp exec <id> "npm test"` runs the command in the checkout with the right php and database variables
 - `lamp branch <id> <branch> --base main` switches without rebuild; dirty checkouts are refused, ignored files are never overwritten
 - `lamp build <id>` reruns the project build on demand; `lamp list --search <term>` finds environments by any value
+- `add`, `build`, `remove` and `reset` of different environments run side by side: clone, import and build of one environment hold no shared lock, only state, vhost, databases and cloudflare changes are serialized; two commands for the same environment wait for each other; `start`, `restart`, `stop` wait until running environment work has finished
 - keep environments until their files and databases have been reviewed; archiving a chat does not require `remove`
 - run `lamp` on the docker host, directly or over ssh (`/usr/local/bin/lamp` for restricted paths); the harness needs no docker inside its own container
 

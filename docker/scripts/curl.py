@@ -33,12 +33,12 @@ def main(arguments):
     ):
         return subprocess.run(["/usr/bin/curl", *arguments]).returncode
     urls = []
-    takes_value = {"--output", "--request", "--header", "--data", "--data-raw", "--data-binary", "--data-urlencode", "--form", "--form-string", "--max-time", "--connect-timeout", "--user-agent", "--cookie", "--cookie-jar", "--upload-file"}
+    takes_value = {"--output", "--request", "--header", "--data", "--data-raw", "--data-binary", "--data-urlencode", "--form", "--form-string", "--max-time", "--connect-timeout", "--user-agent", "--cookie", "--cookie-jar", "--upload-file", "--write-out"}
     switches = {"--silent", "--show-error", "--fail", "--fail-with-body", "--head", "--location", "--compressed", "--get", "--globoff"}
     index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument in takes_value or argument in {"-o", "-X", "-H", "-d", "-F", "-m", "-A", "-b", "-c", "-T"}:
+        if argument in takes_value or argument in {"-o", "-X", "-H", "-d", "-F", "-m", "-A", "-b", "-c", "-T", "-w"}:
             index += 1
             if index >= len(arguments):
                 raise ValueError("Missing curl option value.")

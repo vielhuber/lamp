@@ -37,6 +37,13 @@ class AccessCurlTest(unittest.TestCase):
         self.assertEqual('0', self.calls[0][self.calls[0].index('--max-redirs') + 1])
         self.assertEqual('--disable', self.calls[0][1])
 
+    def test_write_out_reports_status_and_timing_without_request_headers(self):
+        # curl has no write-out variable for request headers, so the format cannot leak the service token
+        for option in ('-w', '--write-out'):
+            self.assertEqual(0, curl.main(['abcdef123456', '--', '-sS', '-o', '/dev/null', option, '%{http_code} %{time_total}', 'https://example.invalid/']))
+            self.assertIn('%{http_code} %{time_total}', self.calls[-1])
+            self.assertNotIn('test-secret', ' '.join(self.calls[-1]))
+
     def test_foreign_origins_never_receive_credentials(self):
         for url in ['https://example.invalid.evil.test/', 'http://example.invalid', 'https://example.invalid:8443', 'https://other.invalid']:
             with self.subTest(url=url):
@@ -47,7 +54,7 @@ class AccessCurlTest(unittest.TestCase):
                     curl.main(['abcdef123456', url])
 
     def test_extra_urls_and_secret_exposing_options_are_refused(self):
-        for extra in [['evil.invalid'], ['https://evil.invalid'], ['--url', 'https://evil.invalid'], ['-v'], ['--trace', '/tmp/trace'], ['--config', '/tmp/config'], ['--next'], ['--connect-to', 'example.invalid:443:evil.invalid:443'], ['--write-out', '%{json}']]:
+        for extra in [['evil.invalid'], ['https://evil.invalid'], ['--url', 'https://evil.invalid'], ['-v'], ['--trace', '/tmp/trace'], ['--config', '/tmp/config'], ['--next'], ['--connect-to', 'example.invalid:443:evil.invalid:443']]:
             with self.subTest(extra=extra):
                 with self.assertRaises(ValueError):
                     curl.main(['abcdef123456', 'https://example.invalid', *extra])
