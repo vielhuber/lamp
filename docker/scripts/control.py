@@ -638,7 +638,8 @@ def wait_access(hostname, public):
             protected = (response.status in (302, 303, 307) and location.scheme == "https"
                          and (location.hostname or "").endswith(".cloudflareaccess.com")
                          and location.path.startswith("/cdn-cgi/access/login"))
-            if protected == (not public) and response.status < 500:
+            # 520 to 530 come from the cloudflare edge while tunnel or dns are not ready; an origin error such as 503 of a stopped service still proves the access decision
+            if protected == (not public) and response.status not in range(520, 531):
                 return
         except (OSError, http.client.HTTPException):
             pass

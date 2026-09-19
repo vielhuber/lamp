@@ -307,6 +307,18 @@ class VisibilityTest(unittest.TestCase):
                 self.real_wait_access('demo.example.test', False)
 
 
+    def test_public_probe_accepts_an_origin_error_but_waits_for_the_cloudflare_edge(self):
+        with patch.object(control.http.client, 'HTTPSConnection') as connection, \
+             patch.object(control.time, 'monotonic', side_effect=[0, 0, 121]):
+            response = connection.return_value.getresponse.return_value
+            response.getheader.return_value = ''
+            response.status = 503
+            self.real_wait_access('demo.example.test', True)
+            response.status = 530
+            with self.assertRaisesRegex(RuntimeError, 'could not be verified'):
+                self.real_wait_access('demo.example.test', True)
+
+
 class CloudflareRequestTest(unittest.TestCase):
     def test_api_errors_never_expose_response_or_credentials(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(control, 'CONFIGURATION', Path(directory)), \
