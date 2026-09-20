@@ -901,11 +901,10 @@ def sync_database(environment, profile_name):
     else:
         profile["target"] = {"database": str(STATE / "environments" / environment["id"] / "data" / "database.sqlite"), "ssh": False}
     environment["database"] = profile["target"]["database"]
-    # Chat environments import the same database again and again: the dump is cached for a while in the state
-    # volume and the tables are restored in parallel, unless the profile says otherwise.
-    profile.setdefault("cache_dir", str(STATE / "syncdb" / "cache"))
-    profile["source"].setdefault("cache", "6h")
-    profile["target"].setdefault("threads", True)
+    # Chat environments import the same database again and again: the dump is cached for six hours (syncdb keeps
+    # it in /root/.syncdb/cache, which lives in the state volume) and the tables are restored in parallel.
+    profile.setdefault("cache", 360)
+    profile.setdefault("threads", min(16, os.cpu_count() or 1))
     run_sync(environment, profile)
 
 
