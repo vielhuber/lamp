@@ -494,7 +494,7 @@ printf 'PasswordAuthentication no\nPermitRootLogin prohibit-password\n' > /etc/s
 step 'syncdb'
 apt-get install -y sqlite3
 mkdir -p /root/.syncdb
-php8.5 /usr/local/bin/composer --working-dir=/root/.syncdb require --no-interaction 'vielhuber/syncdb:^2.1.3'
+php8.5 /usr/local/bin/composer --working-dir=/root/.syncdb require --no-interaction 'vielhuber/syncdb:^2.1.5'
 ln -s /var/lib/lamp/syncdb /root/.syncdb/profiles
 printf '\n# syncdb\nexport PATH="$PATH:/root/.syncdb/vendor/bin"\n' >> /root/.bashrc
 
