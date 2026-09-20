@@ -14,8 +14,8 @@ fi
 mkdir -p /var/lib/lamp/secrets /var/lib/lamp/ssh /var/lib/lamp/syncdb /var/lib/lamp/syncdb/cache /run/lamp-supervisor \
     /run/php /run/mysqld /run/postgresql /run/redis /run/sshd /var/log/supervisor /tmp/xdebug
 chmod 700 /var/lib/lamp/secrets /var/lib/lamp/ssh /var/lib/lamp/syncdb/cache
-# syncdb keeps cached dumps next to its profiles; both live in the state volume
-ln -sfn /var/lib/lamp/syncdb/cache /root/.syncdb/cache
+# syncdb keeps cached dumps in /tmp/syncdb; the folder lives in the state volume, so they survive a new container
+ln -sfn /var/lib/lamp/syncdb/cache /tmp/syncdb
 rm -f /run/lamp-supervisor/cloudflared.conf /run/lamp-supervisor/ngrok.conf
 chmod 1777 /tmp/xdebug
 chown mysql:mysql /run/mysqld /var/lib/mysql
