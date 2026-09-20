@@ -242,6 +242,14 @@ class EnvironmentSetupTest(unittest.TestCase):
                           'smtp.blog.com': 'sslout.provider.test', 'wp-fastest-cache': 'wpfastestcache.off', 'blog.sub.production.com': hostname},
                          sync.call_args.args[1]['replace'])
         self.assertEqual('lamp_' + dynamic['id'], sync.call_args.args[1]['target']['database'])
+        self.assertEqual('6h', sync.call_args.args[1]['source']['cache'])
+        self.assertTrue(sync.call_args.args[1]['target']['threads'])
+        self.assertEqual(str(control.STATE / 'syncdb' / 'cache'), sync.call_args.args[1]['cache_dir'])
+        (control.CONFIGURATION / 'syncdb' / 'fresh-production-local.json').write_text(json.dumps({'engine': 'mysql', 'source': {'cache': False}, 'target': {'threads': 1}}))
+        with patch.object(control, 'run_sync') as sync:
+            control.sync_database(environment, 'fresh-production-local')
+        self.assertFalse(sync.call_args.args[1]['source']['cache'])
+        self.assertEqual(1, sync.call_args.args[1]['target']['threads'])
         (control.PROJECTS / 'plain').mkdir()
         self.invoke('add', '--subdomain', 'plain')
         plain = [item for item in control.environments() if item['subdomain'] == 'plain'][0]
