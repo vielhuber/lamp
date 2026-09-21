@@ -78,6 +78,22 @@ def resolve_identity(value):
     return matches[0]
 
 
+class Parser(argparse.ArgumentParser):
+    """Report a wrong invocation as one line instead of usage text and a traceback."""
+
+    def error(self, message):
+        print("❌ " + re.sub(r"^argument \S+: ", "", message).rstrip(".") + "; see ./lamp help", file=sys.stderr)
+        sys.exit(2)
+
+
+def identity_argument(value):
+    """Let argparse show why an id or subdomain was rejected instead of the bare value."""
+    try:
+        return resolve_identity(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error))
+
+
 def configuration():
     # setup.yaml belongs to this host, settings.yaml to the data folder that several hosts may share.
     setup = yaml.safe_load((SETUP / "setup.yaml").read_text())
@@ -1309,18 +1325,18 @@ def remove(identity):
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = Parser()
     commands = parser.add_subparsers(dest="command", required=True)
     for command in ("prepare", "validate", "reconcile", "reset"):
         commands.add_parser(command)
     commands.add_parser("list").add_argument("--search")
     for command in ("show", "remove", "access", "build"):
-        commands.add_parser(command).add_argument("id", type=resolve_identity)
+        commands.add_parser(command).add_argument("id", type=identity_argument)
     execute = commands.add_parser("exec")
-    execute.add_argument("id", type=resolve_identity)
+    execute.add_argument("id", type=identity_argument)
     execute.add_argument("script")
     branch = commands.add_parser("branch")
-    branch.add_argument("id", type=resolve_identity)
+    branch.add_argument("id", type=identity_argument)
     branch.add_argument("branch")
     branch.add_argument("--base", default="main")
     branch.add_argument("--operation", choices=("switch", "rename"), default="switch")

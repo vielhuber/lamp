@@ -76,6 +76,9 @@ def main(arguments):
 if __name__ == "__main__":
     try:
         sys.exit(main(sys.argv[1:]))
-    except (OSError, ValueError, yaml.YAMLError):
-        print("Authenticated curl failed: check the environment, token file and supported arguments. Redirects must be requested explicitly.", file=sys.stderr)
+    except ValueError as error:
+        print(f"❌ Authenticated curl failed: {error}", file=sys.stderr)
+        sys.exit(1)
+    except (OSError, yaml.YAMLError):
+        print("❌ Authenticated curl failed: check the environment, token file and supported arguments. Redirects must be requested explicitly.", file=sys.stderr)
         sys.exit(1)

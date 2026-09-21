@@ -27,18 +27,18 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
         'WARNING: docker-reset requires a stopped container and removes the containers AND ALL Compose volumes before rebuilding without layer cache; docker-build keeps the volumes.'
     exit 0
 fi
+arguments_valid=true
 case "$command" in
-    docker-setup|presets|docker-build|docker-reset|cloudflare-setup|start|restart|stop|reset|status|version) test "$#" -eq 0 ;;
-    ssh) test "$#" -le 1 ;;
-    build) test "$#" -eq 1 ;;
-    syncdb) test "$#" -eq 1 ;;
-    list) test "$#" -eq 0 || [[ "$#" = 2 && "$1" = --search ]] ;;
-    remove|show|access) test "$#" -eq 1 ;;
-    exec) test "$#" -ge 1 && test "$#" -le 2 ;;
+    docker-setup|presets|docker-build|docker-reset|cloudflare-setup|start|restart|stop|reset|status|version) (( $# == 0 )) || arguments_valid=false ;;
+    ssh) (( $# <= 1 )) || arguments_valid=false ;;
+    build|syncdb|remove|show|access) (( $# == 1 )) || arguments_valid=false ;;
+    list) (( $# == 0 )) || [[ "$#" = 2 && "$1" = --search ]] || arguments_valid=false ;;
+    exec) (( $# >= 1 && $# <= 2 )) || arguments_valid=false ;;
     curl|branch) ;;
     add) ;;
-    *) printf '❌ Unknown command: %s\n' "$command" >&2; exit 2 ;;
+    *) printf '❌ Unknown command: %s; see ./lamp help\n' "$command" >&2; exit 2 ;;
 esac
+if [[ "$arguments_valid" = false ]]; then printf '❌ Wrong arguments for %s; see ./lamp help\n' "$command" >&2; exit 2; fi
 compose=(docker compose --ansi never --progress plain --project-directory "$directory/docker" -f "$directory/docker/docker-compose.yml")
 configured_data_repository() {
     local value
@@ -522,7 +522,8 @@ case "$command" in
     stop) "${compose[@]}" stop ;;
     ssh)
         if [[ "$#" = 1 ]]; then
-            identity=$("${compose[@]}" exec -T app python3 /opt/lamp/control.py show "$1" | python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])')
+            shown=$("${compose[@]}" exec -T app python3 /opt/lamp/control.py show "$1") || exit 1
+            identity=$(printf '%s' "$shown" | python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])')
             "${compose[@]}" exec app bash -c "source /var/lib/lamp/environments/$identity/setup.env && cd \"\$LAMP_PROJECT_DIR\" && git status; exec bash -il"
         else
             "${compose[@]}" exec app bash -il

@@ -53,6 +53,13 @@ class EnvironmentSetupTest(unittest.TestCase):
             control.main()
         return output.getvalue()
 
+    def test_unknown_subdomain_is_reported_as_one_line(self):
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+            self.invoke('show', 'nowhere')
+        self.assertEqual(2, raised.exception.code)
+        self.assertEqual('❌ No environment has the subdomain nowhere; see ./lamp help\n', errors.getvalue())
+
     def test_existing_directory_is_adopted_without_build_until_build_is_requested(self):
         project = control.PROJECTS / 'existing'
         project.mkdir()
