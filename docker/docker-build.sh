@@ -445,7 +445,7 @@ git config --global gpg.format ssh
 git config --global user.signingkey /root/.ssh/id_rsa.pub
 git config --global commit.gpgsign true
 git config --global tag.gpgsign true
-git config --global push.gpgsign true
+git config --global push.gpgsign if-asked
 git config --global core.hooksPath /root/git-template/hooks
 mkdir -p /root/git-template/hooks
 cp /opt/lamp/git-hooks/* /root/git-template/hooks/
