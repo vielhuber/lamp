@@ -102,7 +102,7 @@ def configuration():
         raise ValueError("setup.yaml must contain domain and optionally data; see README.md.")
     path = CONFIGURATION / "settings.yaml"
     value = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
-    sections = {"git": ("name", "email"), "apache": ("admin",), "postfix": ("hostname", "relayhost", "username", "password"),
+    sections = {"git": ("name", "email", "commit_key", "commit_url", "commit_model", "commit_effort"), "apache": ("admin",), "postfix": ("hostname", "relayhost", "username", "password"),
                 "cloudflare": ("token", "email"), "database": ("password",), "composer": ("github",)}
     if (not isinstance(value, dict) or set(value) - {"vpn", "php", *sections}
             or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", "php", *sections))):
@@ -119,7 +119,7 @@ def configuration():
         entries = value.get(section) or {}
         if (set(entries) - set(keys)
                 or any(not isinstance(entry, str) or not entry.strip() or re.search(r"[\r\n\0]", entry) for entry in entries.values())
-                or any(re.search(r"\s", entries[key]) for key in ("admin", "hostname", "relayhost", "token", "email", "github") if key in entries)
+                or any(re.search(r"\s", entries[key]) for key in ("admin", "hostname", "relayhost", "token", "email", "github", "commit_key", "commit_url", "commit_model", "commit_effort") if key in entries)
                 or (section == "cloudflare" and entries and (set(entries) != set(keys) or "@" not in entries["email"]))
                 or ("hostname" in entries and not re.fullmatch(dns_name, entries["hostname"]))
                 or ("relayhost" in entries and not re.fullmatch(r"\[?[A-Za-z0-9.-]+\]?(?::[0-9]{1,5})?", entries["relayhost"]))
@@ -137,11 +137,13 @@ def apply_settings(settings):
     else:
         subprocess.run(["composer", "config", "--global", "--unset", "github-oauth.github.com"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     identity = settings.get("git") or {}
-    for key in ("name", "email"):
+    # the commit_* values feed the prepare-commit-msg hook, which stays silent without them
+    for key, option in {"name": "user.name", "email": "user.email", "commit_key": "commitmessage.key", "commit_url": "commitmessage.url",
+                        "commit_model": "commitmessage.model", "commit_effort": "commitmessage.effort"}.items():
         if key in identity:
-            run(["git", "config", "--global", "user." + key, identity[key]])
+            run(["git", "config", "--global", option, identity[key]])
         else:
-            subprocess.run(["git", "config", "--global", "--unset-all", "user." + key], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["git", "config", "--global", "--unset-all", option], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     admin = (settings.get("apache") or {}).get("admin", "webmaster@localhost")
     APACHE_SETTINGS.write_text(f"Timeout 3000\nServerAdmin {admin}\nServerName localhost\n")
     hostname = (settings.get("postfix") or {}).get("hostname", "lamp.localdomain")

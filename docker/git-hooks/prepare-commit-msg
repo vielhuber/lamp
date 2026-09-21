@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+
+# Settings: an openai compatible endpoint in the git config; without key, url and model the hook does nothing
+#   git config --global commitmessage.key "..."
+#   git config --global commitmessage.url "https://api.openai.com/v1"
+#   git config --global commitmessage.model "..."
+#   git config --global commitmessage.effort "medium" (optional)
+chatgpt_api_key=$(git config --get commitmessage.key || true)
+chatgpt_base_url=$(git config --get commitmessage.url || true)
+chatgpt_model=$(git config --get commitmessage.model || true)
+chatgpt_reasoning_effort=$(git config --get commitmessage.effort || true)
+if [[ -z "$chatgpt_api_key" || -z "$chatgpt_base_url" || -z "$chatgpt_model" ]]; then
+    exit
+fi
+
+debug=false
+declare -A prompts=(
+    ["system"]="
+        You are a professional code reviewer.
+    "
+    ["user.intro"]="
+        Please review a pull request by summarizing the changes made
+        with the help of a bullet list of items that have been changed.
+
+        Instructions:
+        - Review the given output of \"git diff\" for the pull request
+        - Describe only the specific code change that was made, not the code above/below it
+        - If you cannot identify any changes in the diff, return that no changes have been made
+        - Lines beginning with ‘-’ have been DELETED.
+        - Lines beginning with ‘+’ have been ADDED.
+        - Lines without ‘-’ or ‘+’ are just CONTEXT and have NOT been changed.
+        - Create a concise commit message that describes ONLY the actual changes.
+        - Describe only the actual changes (deleted and added lines). Ignore context lines that remain unchanged.
+        - If only a slight change has been made, don't miss that change
+        - Use the imperative mood in every bullet list item
+        - Return always a single bullet list
+        - Don't mention any sensitive information like passwords
+        - Finish every bullet list item with a \".\"
+        - Summarize the overview of the changes made
+        - Don't mention file names
+        - Create a bullet list of different items
+        - The response sentences are no longer than 16 words each
+        - Keep the response sentences as short as possible
+        - Don't write any headlines and start with the bullet list
+
+        If you have prepared the list and it has more than 3 entries,
+        then merge the entries so that they add up to exactly 3 entries.
+        If fewer than 3 items were found, list only 1 or 2.
+    "
+    ["user.pre"]="
+        This is the output of \"git diff\":
+    "
+)
+
+# Variables
+commit_msg_file="$1"
+commit_mode="$2"
+existing_msg=$(cat "$commit_msg_file")
+data_log="/tmp/prepare-commit-msg-data.log"
+output_log="/tmp/prepare-commit-msg-output.log"
+diff_log="/tmp/prepare-commit-msg-diff.log"
+chatgpt_url="${chatgpt_base_url%/}/chat/completions"
+
+# Exit if a proper message is already provided
+if [[ "$commit_mode" == "message" && "$existing_msg" != "." ]]; then
+    exit
+fi
+
+# Output log file
+echo "⚡ Automatically generating git commit message... ⚡"
+
+# Fetch the staged git diff, omit dependency bundles and package version bumps, and strip long lines
+diff=$(
+    git -C "$(git rev-parse --show-toplevel)" diff \
+        --unified=10 \
+        --staged \
+        --no-color \
+        -- . \
+        ':(exclude,glob)**/node_modules/**' \
+        ':(exclude,glob)**/vendor/**' \
+        ':(exclude,glob)**/bundle.js' \
+        ':(exclude,glob)**/bundle.css' | \
+        sed \
+            -e '/.\{1000\}./d' | \
+        awk '
+            /^diff --git / {
+                ignore_version_bumps = $0 ~ / a\/([^ ]*\/)?(package|composer)\.json b\/([^ ]*\/)?(package|composer)\.json$/
+            }
+            ignore_version_bumps && /^[+-][[:space:]]*"version"[[:space:]]*:/ { next }
+            { print }
+        '
+)
+
+# Log the diff for reference
+echo "$diff" > "$diff_log"
+
+# Add diff to prompts array
+prompts["user.ai"]="$diff"
+
+# Escape special characters for JSON formatting
+for prompts__key in "${!prompts[@]}"; do
+    prompts[$prompts__key]=$(sed -r 's/\\/\\\\/g' <<< "${prompts[$prompts__key]}") # \
+    prompts[$prompts__key]=$(sed -r 's/"/\\\"/g' <<< "${prompts[$prompts__key]}") # "
+    prompts[$prompts__key]=$(sed ':a;N;$!ba;s/\n/\\n/g' <<< "${prompts[$prompts__key]}") # \n
+    prompts[$prompts__key]=$(sed 's/\t/    /g' <<< "${prompts[$prompts__key]}") # tabs
+done
+
+# Trim strings
+for prompts__key in "${!prompts[@]}"; do
+    if [[ "$prompts__key" != "user.ai" ]]; then
+        prompts[$prompts__key]=$(sed -r 's/\\n( +)/\\n/g' <<< "${prompts[$prompts__key]}") # Remove blank space
+        prompts[$prompts__key]=$(sed -r 's/^\\n//g' <<< "${prompts[$prompts__key]}") # Remove first line break
+        prompts[$prompts__key]=$(sed -r 's/\\n$//g' <<< "${prompts[$prompts__key]}") # Remove last line break
+    fi
+done
+
+# Prepare the payload for the API request
+payload="{
+    \"model\": \"$chatgpt_model\",${chatgpt_reasoning_effort:+
+    \"reasoning_effort\": \"$chatgpt_reasoning_effort\",}
+    \"messages\": [
+        { \"role\": \"system\", \"content\": \"${prompts["system"]}\" },
+        { \"role\": \"user\", \"content\": \"${prompts["user.intro"]}\" },
+        { \"role\": \"user\", \"content\": \"${prompts["user.pre"]}\" },
+        { \"role\": \"user\", \"content\": \"${prompts["user.ai"]}\" }
+    ]
+}"
+
+# Save payload to log for debugging purposes
+echo "$payload" > "$data_log"
+
+# Make the API call using curl and capture the response
+response=$(curl "$chatgpt_url" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $chatgpt_api_key" \
+    --silent \
+    --data-binary "@$data_log")
+
+# Log the raw response for debugging
+echo "$response" > "$output_log"
+
+# Exit if response contains errors
+if [[ $response =~ \"error\"[[:space:]]*: ]]; then
+    echo "Error calling api..."
+    exit 1
+fi
+
+# Extract the content from the response (handles potential formatting issues)
+response=$(sed -nr 's/.*"content"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/\1/p' <<< "$response")
+response=$(sed -r 's/\\n/\n/g' <<< "$response")
+response=$(sed -r 's/\\"/"/g' <<< "$response")
+response=$(sed -r 's/\\\\/\\/g' <<< "$response")
+if [[ -z "$response" ]]; then
+    echo "Error parsing api response..."
+    exit 1
+fi
+
+# Delete debug files
+if [[ "$debug" = false ]]; then
+    rm -f "$data_log"
+    rm -f "$output_log"
+    rm -f "$diff_log"
+fi
+
+# If commit mode is 'message' => `git commit -m '…'`
+if [[ "$commit_mode" = "message" ]]; then
+    # If commit message file contains only a '.'
+    if [[ "$existing_msg" = "." ]]; then
+        echo "$response" > "$commit_msg_file"
+    fi
+# If commit mode is 'commit' => `git commit`
+else
+    # If the first line is empty, then user didn’t use `git commit --amend`
+    first_line=$(head -n1 "$commit_msg_file")
+    if [[ -z "$first_line" ]]; then
+        echo "$response" > "$commit_msg_file"
+    fi
+fi

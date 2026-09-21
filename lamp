@@ -195,10 +195,14 @@ docker_setup() {
         mkdir -p "$data" "$data/build" "$data/syncdb" "$data/ssh" "$data/vpn"
         chmod 700 "$data" "$data/build" "$data/syncdb" "$data/ssh" "$data/vpn"
         preset "$data/settings.yaml" 600 <<'PRESET'
-# optional: git identity for commits made inside the container
+# optional: git identity for commits made inside the container; commit_* let `git commit` without a message write one through an openai compatible endpoint
 # git:
 #     name: Your Name
 #     email: you@example.com
+#     commit_key: sk-...
+#     commit_url: https://api.openai.com/v1
+#     commit_model: gpt-...
+#     commit_effort: medium
 
 # optional: apache ServerAdmin (default: webmaster@localhost)
 # apache:

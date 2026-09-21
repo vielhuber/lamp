@@ -29,6 +29,8 @@ class SettingsTest(unittest.TestCase):
                                                'apache:\n  admin: admin@example.test\npostfix:\n  hostname: mail.example.test\n')
         settings = control.configuration()
         self.assertEqual({'name': 'Jane Doe', 'email': 'jane@example.test'}, settings['git'])
+        (self.root / 'settings.yaml').write_text('git:\n  commit_key: sk-test\n  commit_url: https://ai.example.test/v1\n  commit_model: model-x\n  commit_effort: low\n')
+        self.assertEqual('https://ai.example.test/v1', control.configuration()['git']['commit_url'])
         (self.root / 'settings.yaml').write_text('git: null\n')
         self.assertIsNone(control.configuration()['git'])
         (self.root / 'settings.yaml').write_text('postfix:\n  relayhost: "[smtp.example.test]:587"\n')
@@ -39,7 +41,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual({'password': 'root'}, control.configuration()['database'])
         (self.root / 'settings.yaml').write_text('php:\n  xdebug: false\n')
         self.assertEqual({'xdebug': False}, control.configuration()['php'])
-        for text in ['git: {nickname: x}', 'git: {name: ""}', 'git: {name: "a\\nb"}', 'git: [name]', 'apache: {admin: "a b"}',
+        for text in ['git: {nickname: x}', 'git: {name: ""}', 'git: {name: "a\\nb"}', 'git: [name]', 'git: {commit_key: "a b"}', 'git: {commit_token: x}', 'apache: {admin: "a b"}',
                      'postfix: {hostname: "Mail.Example"}', 'postfix: {hostname: "a b.test"}', 'postfix: {relayhost: "smtp host"}',
                      'postfix: {relayhost: "smtp://x"}', 'postfix: {relayhost: "[a.test]:587", username: "u"}',
                      'postfix: {username: "u", password: "p"}', 'cloudflare: {token: t}', 'cloudflare: {token: "a b", email: x@y}',
@@ -58,7 +60,7 @@ class SettingsTest(unittest.TestCase):
                 control.configuration()
 
     def test_settings_are_applied_and_fall_back_to_defaults(self):
-        control.apply_settings({'domain': 'example.test', 'git': {'name': 'Jane Doe', 'email': 'jane@example.test'},
+        control.apply_settings({'domain': 'example.test', 'git': {'name': 'Jane Doe', 'email': 'jane@example.test', 'commit_key': 'sk-test', 'commit_model': 'model-x'},
                                 'apache': {'admin': 'admin@example.test'}, 'composer': {'github': 'ghp_test'},
                                 'postfix': {'hostname': 'mail.example.test', 'relayhost': '[smtp.example.test]:587', 'username': 'jane', 'password': 'p:w'}})
         commands = [call.args[0] for call in self.run.call_args_list]
@@ -69,13 +71,16 @@ class SettingsTest(unittest.TestCase):
         self.assertIn(['phpenmod', '-v', 'ALL', '-s', 'ALL', 'xdebug'], commands)
         self.assertIn(['composer', 'config', '--global', 'github-oauth.github.com', 'ghp_test'], commands)
         self.assertIn(['git', 'config', '--global', 'user.email', 'jane@example.test'], commands)
+        self.assertIn(['git', 'config', '--global', 'commitmessage.key', 'sk-test'], commands)
+        self.assertIn(['git', 'config', '--global', 'commitmessage.model', 'model-x'], commands)
         self.assertIn(['postconf', '-e', 'myhostname = mail.example.test', 'relayhost = [smtp.example.test]:587'], commands)
         self.assertEqual('Timeout 3000\nServerAdmin admin@example.test\nServerName localhost\n', control.APACHE_SETTINGS.read_text())
         self.assertEqual('mail.example.test\n', control.MAILNAME.read_text())
         self.run.reset_mock()
         with patch.object(control.subprocess, 'run') as unset:
             control.apply_settings({'domain': 'example.test'})
-        self.assertEqual({'user.name', 'user.email'}, {call.args[0][-1] for call in unset.call_args_list if '--unset-all' in call.args[0]})
+        self.assertEqual({'user.name', 'user.email', 'commitmessage.key', 'commitmessage.url', 'commitmessage.model', 'commitmessage.effort'},
+                         {call.args[0][-1] for call in unset.call_args_list if '--unset-all' in call.args[0]})
         self.assertIn(['composer', 'config', '--global', '--unset', 'github-oauth.github.com'], [call.args[0] for call in unset.call_args_list])
         self.assertFalse(any(call.args[0][:2] == ['git', 'config'] for call in self.run.call_args_list))
         self.run.reset_mock()
