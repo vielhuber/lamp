@@ -81,6 +81,16 @@ done
         self.assertFalse(any(' build ' in call for call in self.calls.read_text().splitlines()))
         self.assertEqual('keep', (self.root / 'local-work').read_text())
 
+    def test_unavailable_docker_reports_wsl_integration_before_reset(self):
+        (self.root / 'bin/docker').write_text('#!/bin/bash\nexit 1\n')
+        self.environment['WSL_DISTRO_NAME'] = 'Ubuntu-test'
+        result = self.invoke()
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('WSL Integration', result.stderr)
+        self.assertIn('Ubuntu-test', result.stderr)
+        self.assertFalse(self.calls.exists())
+        self.assertEqual('keep', (self.root / 'local-work').read_text())
+
 
 if __name__ == '__main__':
     unittest.main()

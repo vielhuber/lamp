@@ -45,6 +45,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - optional: list your environments in `.config/env.yaml` and adjust the projects mount (default `/var/www`) in `docker/docker-compose.override.yml`
 - `./lamp start`
     - the first start asks for the domain, an optional private [data repository](#data-repository) and its ssh key, then creates tunnel, dns record, access application, service token, cache rule and certificate on its own
+    - `Set up phpMyAdmin? [y/N]` adds its private environment to `env.yaml` only on confirmation; its build comes from the configured data folder
     - the final question, `Generate initial environments from folder`, suggests `/var/www`: accept to register its Git checkouts and run their shared build scripts after startup, or clear the input to skip
     - without a data repository it stops after writing the presets: set `cloudflare.token` and `cloudflare.email` in `.data/settings.yaml` and run `./lamp start` again
 
@@ -288,12 +289,12 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - ids are runtime identifiers reported by `add`, `show` and `list`; `add --id` reuses one and is idempotent: identical settings return the existing environment, different settings fail; every command that takes an id also accepts a subdomain label of a static environment
 - a file from the previous id-keyed format is converted on first use; its dynamic entries are dropped from the file, the environments themselves stay
 
-- `./lamp docker-setup` writes `.config/env.yaml` with a commented example entry and the phpmyadmin entry below; the first `add` or reconciliation rewrites the file without comments, one blank line between entries
+- `./lamp docker-setup` writes an empty `.config/env.yaml` with a commented example and asks whether to add phpmyadmin; existing entries stay
 - its final question optionally generates initial environments from a folder (default `/var/www`, immediate Git checkouts only); the folder must be mounted at the same path under `/var/www` in the container. Existing entries and checkouts stay; already registered directories are skipped. On an already configured installation, run `./lamp docker-setup` and then `start` or `restart` to use this step.
 - generation reads each checkout's `origin`, sets branch `main`, private visibility, PHP from `.phprc` or `8.5`, and its existing directory; it does not switch checkout branches. Subdomains use lowercase folder names with non-DNS characters replaced by hyphens, trimming leading/trailing hyphens; collisions fail. Webroot is the first existing `_public`, `public`, `new`, `html/br-kk`, or `.`.
 - database settings come from literal `syncdb <profile>` calls in the matching data build script (`engine` and `target.database`; SQLite uses the filename without extension). Without syncdb, `postgres` outside comments selects PostgreSQL with the normalized name; otherwise there is no database. Conflicting profiles fail. `nebro` gets VPN profile `nebro` only when enabled in settings. No build override, aliases or proxy settings are added.
 - generation is implemented in Bash and uses the container's configured data folder. Each newly registered project with a shared build script gets an explicit build. Pending work is kept in `.config/initial-environments` and `.config/initial-environments.jsonl` until completion, so a later start/restart resumes after a failure without repeating completed builds.
-- phpmyadmin: `https://github.com/phpmyadmin/phpmyadmin.git` on branch `STABLE` as subdomain `phpmyadmin`, private, so cloudflare access protects it like every other environment; its build script `.data/build/github.com-phpmyadmin-phpmyadmin.sh` runs composer and yarn and writes `config.inc.php` with automatic root login from the container's database password; delete the entry if you do not want it
+- optional phpmyadmin: `https://github.com/phpmyadmin/phpmyadmin.git` on branch `STABLE` as subdomain `phpmyadmin`, private; uses `build/github.com-phpmyadmin-phpmyadmin.sh` from the configured data folder, without a build override
 
 | key             | default         | meaning                                                                                                       |
 | --------------- | --------------- | ------------------------------------------------------------------------------------------------------------- |

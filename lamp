@@ -8,7 +8,7 @@ json=false
 if [[ "$command" = status || "$command" = version ]] && [[ "${1:-}" = --json ]]; then json=true; shift; fi
 if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
     printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build <id|subdomain>|syncdb <profile>|list [--search <term>]|show <id|subdomain>|branch|exec [<id|subdomain>] "<command>"|curl|access <id|subdomain>|remove <id|subdomain>|reset|ssh [<id|subdomain>]|cloudflare-setup|docker-build|docker-setup|presets|docker-reset' \
-        'docker-setup is run by the first start of a new installation: it asks for the domain and an optional private data repository, creates .config with setup.yaml and env.yaml with phpmyadmin, docker/docker-compose.override.yml with the projects mount and, without a data repository, .data with a commented settings.yaml and example files for syncdb and build scripts; with a data repository it asks once for a private ssh key and clones the data into the container; existing files are kept.' \
+        'docker-setup is run by the first start of a new installation: it asks for the domain, an optional private data repository and whether to add phpmyadmin, creates .config with setup.yaml and env.yaml, docker/docker-compose.override.yml with the projects mount and, without a data repository, .data with a commented settings.yaml and example files for syncdb and build scripts; with a data repository it asks once for a private ssh key and clones the data into the container; existing files are kept.' \
         'reset removes every dynamic environment with its checkout under _environments and its isolated databases; static environments stay. docker-reset is something else: it deletes all volumes.' \
         'presets writes the boilerplate .config/env.yaml and docker/docker-compose.override.yml when they are missing; init runs it.' \
         'The final setup question can generate initial environments from existing Git checkouts (default /var/www); registered directories stay, new entries use main and private visibility, and matching shared build scripts run once after startup.' \
@@ -41,6 +41,14 @@ case "$command" in
 esac
 if [[ "$arguments_valid" = false ]]; then printf '❌ Wrong arguments for %s; see ./lamp help\n' "$command" >&2; exit 2; fi
 compose=(docker compose --ansi never --progress plain --project-directory "$directory/docker" -f "$directory/docker/docker-compose.yml")
+require_docker() {
+    if docker info > /dev/null 2>&1; then return; fi
+    printf '%s\n' '❌ Docker is unavailable. Start Docker Desktop or the Docker daemon and retry.' >&2
+    if [[ -n "${WSL_DISTRO_NAME:-}" ]]; then
+        printf '👉 Docker Desktop → Settings → Resources → WSL Integration: enable "%s", then Apply.\n' "$WSL_DISTRO_NAME" >&2
+    fi
+    return 1
+}
 configured_data_repository() {
     local value
     value=$(sed -n 's/^data:[[:space:]]*//p' "$directory/.config/setup.yaml" | sed "s/[[:space:]]*\(#.*\)\?$//; s/^[\"']//; s/[\"']$//")
@@ -66,6 +74,7 @@ read_data_key() {
 }
 sync_data() {
     local in_container data_result
+    require_docker
     # a one-off container sees the mounts of the next start; build, syncdb and add need the running container anyway; the later flag silences compose
     in_container=("${compose[@]}" --progress quiet run --rm --no-deps -T app)
     if [[ "$command" = build || "$command" = syncdb || "$command" = add ]]; then in_container=("${compose[@]}" exec -T app); fi
@@ -137,18 +146,7 @@ write_presets() {
 #   visibility: private
 #   build: 'syncdb project-production-local && composer install'
 
-# phpmyadmin with automatic root login behind cloudflare access; built by .data/build/github.com-phpmyadmin-phpmyadmin.sh
-- git: https://github.com/phpmyadmin/phpmyadmin.git
-  branch: STABLE
-  subdomain: phpmyadmin
-  directory: phpmyadmin
-  db_name: null
-  db_engine: null
-  webroot: null
-  vpn: null
-  proxy_port: null
-  proxy_exclude: null
-  visibility: private
+[]
 PRESET
     preset "$directory/docker/docker-compose.override.yml" 644 <<'PRESET'
 # host-specific settings, ignored by git.
@@ -326,6 +324,18 @@ PRESET
     else
         printf '%s\n' '👉 next: set cloudflare.token and cloudflare.email in .data/settings.yaml, then ./lamp start'
     fi
+    if { : < /dev/tty; } 2> /dev/null; then
+        read -r -p 'Set up phpMyAdmin? [y/N]: ' phpmyadmin < /dev/tty
+        if [[ "${phpmyadmin,,}" = y || "${phpmyadmin,,}" = yes || "${phpmyadmin,,}" = j || "${phpmyadmin,,}" = ja ]]; then
+            require_docker
+            "${compose[@]}" --progress quiet run --rm --no-deps -T app yq -y --in-place '
+                if any(.[]; .directory == "phpmyadmin" or
+                    (.subdomain | if type == "array" then . else [.] end | index("phpmyadmin") != null))
+                then . else . + [{git: "https://github.com/phpmyadmin/phpmyadmin.git", branch: "STABLE",
+                    subdomain: "phpmyadmin", directory: "phpmyadmin", visibility: "private"}] end
+            ' /etc/lamp-config/env.yaml
+        fi
+    fi
     if { : < /dev/tty; } 2> /dev/null && [[ ! -e "$config/initial-environments" ]]; then
         read -r -e -i /var/www -p 'Generate initial environments from folder (empty to skip): ' initial_folder < /dev/tty
         if [[ -n "$initial_folder" ]]; then
@@ -346,6 +356,7 @@ if [[ "$command" = presets ]]; then
     write_presets
     exit 0
 fi
+if [[ "$command" != status && "$command" != version ]]; then require_docker; fi
 # the first start of a new installation asks the setup questions itself; without a data repository the settings have to be filled first
 if [[ "$command" = start && ! -e "$directory/.config/setup.yaml" ]] && { : < /dev/tty; } 2> /dev/null; then
     docker_setup

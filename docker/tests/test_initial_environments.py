@@ -166,12 +166,52 @@ class InitialSetupTest(unittest.TestCase):
             executable = root / 'lamp'
             executable.write_text((DOCKER.parent / 'lamp').read_text())
             result = subprocess.run(['script', '-qec', 'bash ' + shlex.quote(str(executable)) + ' docker-setup', '/dev/null'],
-                                    input='example.test\n\n\n', text=True, capture_output=True, timeout=10)
+                                    input='example.test\n\nn\n\n', text=True, capture_output=True, timeout=10)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertIn('Generate initial environments from folder', result.stdout)
             self.assertLess(result.stdout.index('Private git repository'), result.stdout.index('Generate initial environments'))
             self.assertEqual('/var/www\n', (root / '.config/initial-environments').read_text())
             self.assertEqual(0o600, (root / '.config/initial-environments').stat().st_mode & 0o777)
+            self.assertEqual([], yaml.safe_load((root / '.config/env.yaml').read_text()))
+
+    def test_phpmyadmin_is_opt_in_and_preserves_existing_entries_without_duplicates(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            executable = root / 'lamp'
+            executable.write_text((DOCKER.parent / 'lamp').read_text())
+            subprocess.run(['bash', str(executable), 'presets'], check=True, capture_output=True)
+            self.assertEqual([], yaml.safe_load((root / '.config/env.yaml').read_text()))
+            existing = {'subdomain': 'custom', 'directory': 'custom', 'php': '8.3'}
+            (root / '.config/env.yaml').write_text(yaml.safe_dump([existing]))
+            (root / 'bin').mkdir()
+            docker = root / 'bin/docker'
+            docker.write_text('''#!/bin/bash
+set -euo pipefail
+if [[ "$1" = info ]]; then exit 0; fi
+while [[ "$1" != yq ]]; do shift; done
+arguments=()
+for argument in "$@"; do
+    if [[ "$argument" = /etc/lamp-config/env.yaml ]]; then argument="$TEST_CONFIG/env.yaml"; fi
+    arguments+=("$argument")
+done
+"${arguments[@]}"
+''')
+            docker.chmod(0o755)
+            environment = {**os.environ, 'PATH': str(root / 'bin') + ':' + os.environ['PATH'], 'TEST_CONFIG': str(root / '.config')}
+            for command, answers in [('start', 'example.test\n\ny\n\n'), ('docker-setup', 'y\n')]:
+                result = subprocess.run(['script', '-qec', 'bash ' + shlex.quote(str(executable)) + ' ' + command, '/dev/null'],
+                                        input=answers, env=environment, text=True, capture_output=True, timeout=10)
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertIn('Set up phpMyAdmin?', result.stdout)
+                entries = yaml.safe_load((root / '.config/env.yaml').read_text())
+                self.assertEqual(2, len(entries))
+                self.assertEqual(existing, entries[0])
+                self.assertEqual('https://github.com/phpmyadmin/phpmyadmin.git', entries[1]['git'])
+                self.assertEqual('STABLE', entries[1]['branch'])
+                self.assertEqual('phpmyadmin', entries[1]['subdomain'])
+                self.assertEqual('phpmyadmin', entries[1]['directory'])
+                self.assertEqual('private', entries[1]['visibility'])
+                self.assertNotIn('build', entries[1])
 
     def test_start_runs_pending_generation_after_container_and_reconciliation(self):
         with tempfile.TemporaryDirectory() as temporary:
