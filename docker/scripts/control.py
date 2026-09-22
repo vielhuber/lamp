@@ -295,8 +295,9 @@ def validate_specification(value):
         if not isinstance(value["db_name"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}", value["db_name"]):
             raise ValueError("db_name must be a database name of letters, digits, underscores and hyphens.")
     if value["directory"] is not None and (not labels or not isinstance(value["directory"], str)
-                                           or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}(?:/[a-z0-9][a-z0-9_-]{0,62}){0,3}", value["directory"])):
-        raise ValueError("directory must be a lowercase folder path under /var/www without parent segments and requires a subdomain.")
+                                           or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}(?:/[A-Za-z0-9_.-]{1,100}){0,3}", value["directory"])
+                                           or any(part in (".", "..") for part in value["directory"].split("/"))):
+        raise ValueError("directory must be a relative folder path under /var/www without dot or parent segments and requires a subdomain.")
     for key in ("branch", "build", "webroot"):
         if value[key] is not None and (not isinstance(value[key], str) or not value[key] or "\0" in value[key]):
             raise ValueError("branch, build and webroot must be nonempty strings or null.")

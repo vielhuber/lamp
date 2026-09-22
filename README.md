@@ -45,6 +45,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - optional: list your environments in `.config/env.yaml` and adjust the projects mount (default `/var/www`) in `docker/docker-compose.override.yml`
 - `./lamp start`
     - the first start asks for the domain, an optional private [data repository](#data-repository) and its ssh key, then creates tunnel, dns record, access application, service token, cache rule and certificate on its own
+    - the final question, `Generate initial environments from folder`, suggests `/var/www`: accept to register its Git checkouts and run their shared build scripts after startup, or clear the input to skip
     - without a data repository it stops after writing the presets: set `cloudflare.token` and `cloudflare.email` in `.data/settings.yaml` and run `./lamp start` again
 
 </details>
@@ -99,7 +100,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `./lamp cloudflare-setup`                                                          | create or verify tunnel, wildcard dns, access application, service token and cache rule; prints `ok`, `created`, `updated`, `rotated` or `recreated` per item            |
 | `./lamp docker-build`                                                              | rebuild the image without layer cache, keep volumes (requires stopped container)                                                                                         |
 | `./lamp docker-setup`                                                              | run by the first `start` of a new installation: ask for the domain and an optional data repository, create `.config`, the compose override and, without a data repository, `.data` with commented presets and example files; keeps existing files |
-| `./lamp docker-reset`                                                              | **delete all compose volumes**, then rebuild the image (requires stopped container)                                                                                      |
+| `./lamp docker-reset`                                                              | automatically stop and remove containers, **all compose volumes** and service images; no rebuild                                                                         |
 
 ```bash
 ./lamp add \
@@ -175,8 +176,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>docker-reset</summary>
 
-- `./lamp stop`
-- `./lamp docker-reset` (deletes databases, environment metadata and every other compose volume; `.data` and `/var/www` survive)
+- `./lamp docker-reset` (stops automatically, deletes containers, images, databases and all compose volumes without rebuilding; `.data`, `.config` and `/var/www` survive)
 - `./lamp start` (re-registers all environments from `.config/env.yaml`, including database imports and builds)
 
 </details>
@@ -289,6 +289,10 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - a file from the previous id-keyed format is converted on first use; its dynamic entries are dropped from the file, the environments themselves stay
 
 - `./lamp docker-setup` writes `.config/env.yaml` with a commented example entry and the phpmyadmin entry below; the first `add` or reconciliation rewrites the file without comments, one blank line between entries
+- its final question optionally generates initial environments from a folder (default `/var/www`, immediate Git checkouts only); the folder must be mounted at the same path under `/var/www` in the container. Existing entries and checkouts stay; already registered directories are skipped. On an already configured installation, run `./lamp docker-setup` and then `start` or `restart` to use this step.
+- generation reads each checkout's `origin`, sets branch `main`, private visibility, PHP from `.phprc` or `8.5`, and its existing directory; it does not switch checkout branches. Subdomains use lowercase folder names with non-DNS characters replaced by hyphens, trimming leading/trailing hyphens; collisions fail. Webroot is the first existing `_public`, `public`, `new`, `html/br-kk`, or `.`.
+- database settings come from literal `syncdb <profile>` calls in the matching data build script (`engine` and `target.database`; SQLite uses the filename without extension). Without syncdb, `postgres` outside comments selects PostgreSQL with the normalized name; otherwise there is no database. Conflicting profiles fail. `nebro` gets VPN profile `nebro` only when enabled in settings. No build override, aliases or proxy settings are added.
+- generation is implemented in Bash and uses the container's configured data folder. Each newly registered project with a shared build script gets an explicit build. Pending work is kept in `.config/initial-environments` and `.config/initial-environments.jsonl` until completion, so a later start/restart resumes after a failure without repeating completed builds.
 - phpmyadmin: `https://github.com/phpmyadmin/phpmyadmin.git` on branch `STABLE` as subdomain `phpmyadmin`, private, so cloudflare access protects it like every other environment; its build script `.data/build/github.com-phpmyadmin-phpmyadmin.sh` runs composer and yarn and writes `config.inc.php` with automatic root login from the container's database password; delete the entry if you do not want it
 
 | key             | default         | meaning                                                                                                       |
@@ -529,7 +533,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>verification</summary>
 
-- `bash -n lamp docker/docker-build.sh docker/docker-entrypoint.sh docker/docker-start.sh docker/scripts/healthcheck.sh`
+- `bash -n lamp` and `bash -n docker/scripts/initial-environments.sh`
+- `for script in docker/docker-build.sh docker/docker-entrypoint.sh docker/docker-start.sh docker/scripts/healthcheck.sh; do bash -n "$script"; done`
 - `docker compose -f docker/docker-compose.yml config --quiet`
 - `python3 -m unittest discover -s docker/tests`
 - the container copies `docker/scripts/` to `/opt/lamp/` at image build time; changed scripts need `./lamp docker-build` or a `docker compose cp` into the running container

@@ -14,6 +14,7 @@ docker/scripts/*
 !docker/scripts/control.py
 !docker/scripts/curl.py
 !docker/scripts/healthcheck.sh
+!docker/scripts/initial-environments.sh
 !docker/scripts/vpn.py
 !docker/git-hooks/
 docker/git-hooks/*

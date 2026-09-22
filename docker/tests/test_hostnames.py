@@ -45,6 +45,15 @@ class HostnamesTest(unittest.TestCase):
             with self.subTest(labels=labels), self.assertRaises(ValueError):
                 control.validate_specification({'subdomain': labels})
 
+    def test_repository_directory_preserves_dots_and_case(self):
+        for name in ['vielhuber.de', 'My_Repository', '.github', 'nested/Project.Name']:
+            with self.subTest(name=name):
+                value = control.validate_specification({'subdomain': 'project', 'directory': name})
+                self.assertEqual(name, value['directory'])
+        for name in ['.', '..', 'a/./b', 'a/../b', '/absolute', 'a//b']:
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                control.validate_specification({'subdomain': 'project', 'directory': name})
+
     def test_subdomain_list_roundtrips_through_yaml(self):
         identity = 'abcdef012345'
         value = control.validate_specification({'subdomain': ['one', 'two']})

@@ -11,6 +11,7 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
         'docker-setup is run by the first start of a new installation: it asks for the domain and an optional private data repository, creates .config with setup.yaml and env.yaml with phpmyadmin, docker/docker-compose.override.yml with the projects mount and, without a data repository, .data with a commented settings.yaml and example files for syncdb and build scripts; with a data repository it asks once for a private ssh key and clones the data into the container; existing files are kept.' \
         'reset removes every dynamic environment with its checkout under _environments and its isolated databases; static environments stay. docker-reset is something else: it deletes all volumes.' \
         'presets writes the boilerplate .config/env.yaml and docker/docker-compose.override.yml when they are missing; init runs it.' \
+        'The final setup question can generate initial environments from existing Git checkouts (default /var/www); registered directories stay, new entries use main and private visibility, and matching shared build scripts run once after startup.' \
         'cloudflare-setup creates or verifies the tunnel, the wildcard dns record, the Access application with its policies, the service token and the cache bypass rule with cloudflare.token from settings.yaml.' \
         'build <id|subdomain> reruns the configured build of an existing environment inside the running container; docker-build rebuilds the image without layer cache.' \
         'syncdb <profile> runs a .data/syncdb profile unchanged inside the container; its target must point at the container databases (localhost, root, database.password).' \
@@ -24,7 +25,7 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
         'Each --alias adds <subdomain-or-id>-<suffix>.<domain> to the same environment; show includes all URLs.' \
         'Without --build, .data/build/<host>-<repository-path-with-hyphens>.sh is used if it exists.' \
         'For isolated database imports, use --build "syncdb <profile> && <setup commands>".' \
-        'WARNING: docker-reset requires a stopped container and removes the containers AND ALL Compose volumes before rebuilding without layer cache; docker-build keeps the volumes.'
+        'WARNING: docker-reset automatically stops and removes the containers, ALL Compose volumes and service images; it does not rebuild. docker-build keeps the volumes.'
     exit 0
 fi
 arguments_valid=true
@@ -325,6 +326,17 @@ PRESET
     else
         printf '%s\n' '👉 next: set cloudflare.token and cloudflare.email in .data/settings.yaml, then ./lamp start'
     fi
+    if { : < /dev/tty; } 2> /dev/null && [[ ! -e "$config/initial-environments" ]]; then
+        read -r -e -i /var/www -p 'Generate initial environments from folder (empty to skip): ' initial_folder < /dev/tty
+        if [[ -n "$initial_folder" ]]; then
+            initial_folder=$(realpath -e -- "$initial_folder")
+            if [[ ! -d "$initial_folder" || ( "$initial_folder" != /var/www && "$initial_folder" != /var/www/* ) ]]; then
+                printf '%s\n' '❌ Choose an existing folder under /var/www, mounted at the same path in the container.' >&2
+                exit 2
+            fi
+            (umask 077; printf '%s\n' "$initial_folder" > "$config/initial-environments")
+        fi
+    fi
 }
 if [[ "$command" = docker-setup ]]; then
     docker_setup
@@ -438,14 +450,17 @@ if [[ "$command" = status || "$command" = version ]]; then
     if [[ "$service_result" != 0 && "$service_result" != 3 ]]; then exit "$service_result"; fi
     exit 0
 fi
-if [[ ! -f "$LAMP_CONFIG_DIR/setup.yaml" || ! -f "$directory/docker/docker-compose.override.yml" ]]; then
-    printf '%s\n' '❌ Missing .config/setup.yaml or docker/docker-compose.override.yml. Run ./lamp docker-setup first.' >&2
-    exit 1
+data_repository=
+if [[ "$command" != docker-reset ]]; then
+    if [[ ! -f "$LAMP_CONFIG_DIR/setup.yaml" || ! -f "$directory/docker/docker-compose.override.yml" ]]; then
+        printf '%s\n' '❌ Missing .config/setup.yaml or docker/docker-compose.override.yml. Run ./lamp docker-setup first.' >&2
+        exit 1
+    fi
+    chmod 700 "$LAMP_CONFIG_DIR"
+    data_repository=$(configured_data_repository)
+    # without a data repository the .data folder is mounted at /etc/lamp
+    if [[ -z "$data_repository" ]]; then compose+=(-f "$directory/docker/docker-compose.data.yml"); fi
 fi
-chmod 700 "$LAMP_CONFIG_DIR"
-data_repository=$(configured_data_repository)
-# without a data repository the .data folder is mounted at /etc/lamp
-if [[ -z "$data_repository" ]]; then compose+=(-f "$directory/docker/docker-compose.data.yml"); fi
 # environments belong to www-data while harnesses run as root on the host
 if [[ "$command" = start || "$command" = add ]] && ! git config --global --get-all safe.directory | grep -qx '\*'; then
     git config --global --add safe.directory '*'
@@ -465,7 +480,7 @@ case "$command" in
         ;;
 esac
 case "$command" in
-    docker-build|docker-reset|start|restart|stop)
+    docker-build|start|restart|stop)
         container_state=$("${compose[@]}" ps --all --format '{{.State}}' app)
         case "$container_state" in
             running|restarting|paused)
@@ -495,17 +510,13 @@ if [[ -n "$data_repository" ]]; then
             ;;
     esac
 fi
-if [[ -z "$data_repository" ]]; then
+if [[ "$command" != docker-reset && -z "$data_repository" ]]; then
     mkdir -p "$directory/.data/ssh" "$directory/.data/syncdb" "$directory/.data/build"
     chmod 700 "$directory/.data" "$directory/.data/ssh" "$directory/.data/syncdb" "$directory/.data/build"
 fi
 case "$command" in
     docker-build) "${compose[@]}" build --no-cache ;;
-    docker-reset)
-        terminal_type=${TERM:-xterm}
-        if [[ "$terminal_type" = dumb ]]; then terminal_type=xterm; fi
-        TERM="$terminal_type" clear >&3 && "${compose[@]}" down --volumes && "${compose[@]}" build --no-cache
-        ;;
+    docker-reset) "${compose[@]}" down --volumes --rmi all --remove-orphans ;;
     start|restart)
         if [[ "$command" = restart && "$container_state" = running ]]; then
             "${compose[@]}" exec -T app python3 /opt/lamp/vpn.py validate
@@ -522,6 +533,9 @@ case "$command" in
         printf '🐳 container is healthy, applying .config/env.yaml\n'
         phase=environments
         "${compose[@]}" exec -T app python3 /opt/lamp/control.py reconcile
+        if [[ -f "$directory/.config/initial-environments" ]]; then
+            "${compose[@]}" exec -T app bash /opt/lamp/initial-environments.sh
+        fi
         ;;
     stop) "${compose[@]}" stop ;;
     ssh)

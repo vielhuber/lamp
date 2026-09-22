@@ -12,6 +12,11 @@ class ImageContextTest(unittest.TestCase):
         self.assertTrue(hooks)
         self.assertEqual([], [hook for hook in hooks if 'docker/git-hooks/' + hook not in allowed])
 
+    def test_every_runtime_script_is_part_of_the_build_context(self):
+        allowed = {line[1:] for line in (DOCKER / 'Dockerfile.dockerignore').read_text().splitlines() if line.startswith('!')}
+        scripts = [path.name for path in (DOCKER / 'scripts').iterdir() if path.is_file()]
+        self.assertEqual([], [script for script in scripts if 'docker/scripts/' + script not in allowed])
+
 
 if __name__ == '__main__':
     unittest.main()
