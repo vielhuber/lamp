@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -148,6 +149,130 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.invoke('add', '--id', self.identity, '--build', 'printf dynamic > build-result.txt')
         project = control.PROJECTS / '_environments' / self.identity
         self.assertEqual('dynamic', (project / 'build-result.txt').read_text())
+
+    def prepare_restore_repository(self):
+        repository = control.PROJECTS.parent / 'repository'
+        repository.mkdir()
+        subprocess.run(['git', 'init', '-b', 'main', str(repository)], capture_output=True, check=True)
+        for name, contents in [('generated.txt', 'original'), ('deleted.txt', 'original'),
+                               ('user.txt', 'original'), ('.gitignore', '.env\nnode_modules/\n')]:
+            (repository / name).write_text(contents)
+        subprocess.run(['git', '-C', str(repository), 'add', '.'], check=True)
+        subprocess.run(['git', '-C', str(repository), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                        'commit', '-m', 'Initial fixture'], capture_output=True, check=True)
+        remote = 'git@example.test:owner/restore.git'
+
+        def run_git(arguments, **kwargs):
+            if arguments[0] != 'git':
+                return ''
+            arguments = [str(repository) if argument == remote else argument for argument in arguments]
+            return subprocess.run(arguments, cwd=kwargs.get('cwd'), capture_output=True, text=True, check=True).stdout
+
+        self.run.side_effect = run_git
+        script = control.build_script(remote)
+        script.parent.mkdir()
+        script.write_text('printf built > generated.txt\ngit add generated.txt\nrm -f deleted.txt\n'
+                          'printf new > untracked.txt\nprintf configuration > .env\n'
+                          'mkdir -p node_modules\nprintf dependency > node_modules/package.txt\n')
+        return remote, script
+
+    def test_restore_after_build_only_cleans_the_first_successful_clone(self):
+        remote, _ = self.prepare_restore_repository()
+        self.invoke('add', '--id', self.identity, '--git', remote, '--branch', 'main', '--restore-worktree-after-build')
+        project = control.PROJECTS / '_environments' / self.identity
+        self.assertEqual('original', (project / 'generated.txt').read_text())
+        self.assertEqual('original', (project / 'deleted.txt').read_text())
+        self.assertEqual('new', (project / 'untracked.txt').read_text())
+        self.assertEqual('configuration', (project / '.env').read_text())
+        self.assertEqual('dependency', (project / 'node_modules/package.txt').read_text())
+        self.assertEqual('', subprocess.run(['git', 'diff', '--cached'], cwd=project, capture_output=True, text=True, check=True).stdout)
+        self.assertNotIn('restore_worktree_after_build', control.load_environment(self.identity))
+        (project / 'user.txt').write_text('user changes')
+        subprocess.run(['git', 'add', 'user.txt'], cwd=project, check=True)
+        self.invoke('add', '--id', self.identity, '--restore-worktree-after-build')
+        self.invoke('build', self.identity)
+        self.assertEqual('user changes', (project / 'user.txt').read_text())
+        self.assertEqual('built', (project / 'generated.txt').read_text())
+        self.assertFalse((project / 'deleted.txt').exists())
+        self.assertIn('user changes', subprocess.run(['git', 'show', ':user.txt'], cwd=project, capture_output=True, text=True, check=True).stdout)
+
+    def test_initial_build_without_restore_flag_keeps_its_changes(self):
+        remote, _ = self.prepare_restore_repository()
+        self.invoke('add', '--id', self.identity, '--git', remote, '--branch', 'main')
+        project = control.PROJECTS / '_environments' / self.identity
+        self.assertEqual('built', (project / 'generated.txt').read_text())
+        self.assertFalse((project / 'deleted.txt').exists())
+
+    def test_failed_initial_build_and_later_retry_never_restore_changes(self):
+        remote, script = self.prepare_restore_repository()
+        script.write_text(script.read_text() + 'test -f retry-ready\n')
+        with self.assertRaisesRegex(RuntimeError, 'bash failed'):
+            self.invoke('add', '--id', self.identity, '--git', remote, '--branch', 'main', '--restore-worktree-after-build')
+        project = control.PROJECTS / '_environments' / self.identity
+        self.assertEqual('built', (project / 'generated.txt').read_text())
+        (project / 'user.txt').write_text('recovery changes')
+        (project / 'retry-ready').touch()
+        self.invoke('build', self.identity)
+        self.assertEqual('recovery changes', (project / 'user.txt').read_text())
+        self.assertEqual('built', (project / 'generated.txt').read_text())
+
+    def test_restore_flag_does_not_touch_an_adopted_checkout(self):
+        remote, _ = self.prepare_restore_repository()
+        project = control.PROJECTS / '_environments' / self.identity
+        project.parent.mkdir()
+        self.run(['git', 'clone', remote, str(project)])
+        (project / 'user.txt').write_text('existing changes')
+        self.invoke('add', '--id', self.identity, '--git', remote, '--branch', 'main', '--restore-worktree-after-build')
+        self.assertEqual('original', (project / 'generated.txt').read_text())
+        self.invoke('build', self.identity)
+        self.assertEqual('existing changes', (project / 'user.txt').read_text())
+        self.assertEqual('built', (project / 'generated.txt').read_text())
+
+    def test_restore_flag_is_not_applied_to_static_environments(self):
+        remote, _ = self.prepare_restore_repository()
+        self.invoke('add', '--id', self.identity, '--git', remote, '--branch', 'main', '--subdomain', 'static',
+                    '--restore-worktree-after-build')
+        project = control.PROJECTS / 'static'
+        (project / 'user.txt').write_text('existing changes')
+        self.invoke('build', self.identity)
+        self.assertEqual('existing changes', (project / 'user.txt').read_text())
+        self.assertEqual('built', (project / 'generated.txt').read_text())
+
+    def test_build_cannot_enable_worktree_restoration(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+            self.invoke('build', self.identity, '--restore-worktree-after-build')
+        self.assertEqual(2, raised.exception.code)
+
+    def test_restore_refuses_a_build_that_changed_head(self):
+        remote, script = self.prepare_restore_repository()
+        script.write_text(script.read_text() + 'git -c user.name=Test -c user.email=test@example.invalid commit -m "Build commit"\n')
+        with self.assertRaisesRegex(ValueError, 'HEAD changed'):
+            self.invoke('add', '--id', self.identity, '--git', remote, '--branch', 'main', '--restore-worktree-after-build')
+        project = control.PROJECTS / '_environments' / self.identity
+        self.assertEqual('built', (project / 'generated.txt').read_text())
+
+    def test_restore_requires_a_clean_initial_clone(self):
+        remote, _ = self.prepare_restore_repository()
+        run_git = self.run.side_effect
+
+        def dirty_clone(arguments, **kwargs):
+            result = run_git(arguments, **kwargs)
+            if arguments[:2] == ['git', 'clone']:
+                (Path(arguments[-1]) / 'user.txt').write_text('unexpected changes')
+            return result
+
+        self.run.side_effect = dirty_clone
+        with self.assertRaisesRegex(ValueError, 'initial clone is not clean'):
+            self.invoke('add', '--id', self.identity, '--git', remote, '--branch', 'main', '--restore-worktree-after-build')
+        project = control.PROJECTS / '_environments' / self.identity
+        self.assertEqual('unexpected changes', (project / 'user.txt').read_text())
+        self.assertEqual('original', (project / 'generated.txt').read_text())
+
+    def test_restore_flag_allows_an_empty_environment_without_git(self):
+        self.invoke('add', '--id', self.identity, '--restore-worktree-after-build', '--build', 'printf built > result.txt')
+        project = control.PROJECTS / '_environments' / self.identity
+        self.assertEqual('built', (project / 'result.txt').read_text())
+        self.assertFalse(any(call.args[0][0] == 'git' for call in self.run.call_args_list))
 
     def test_yaml_add_uses_repository_script_without_changing_existing_git_checkout(self):
         project = control.PROJECTS / 'existing'

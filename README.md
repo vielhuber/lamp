@@ -113,6 +113,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
     --php <v> \
     --vpn <name> \
     --build "<cmd>" \
+    --restore-worktree-after-build \
     --subdomain <label> \
     --directory <name> \
     --db-name <name> \
@@ -339,6 +340,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - `.data/build/<host>-<repository path with / replaced by ->.sh`, e.g. `github.com-owner-project.sh` for `git@github.com:owner/project.git` and `https://github.com/owner/project.git`
 - sourced by bash with `set -e` in the checkout, the selected php first on `PATH`, node lts, the variables below and a `syncdb` function
 - static environments (including phpMyAdmin) only run scripts on `./lamp build <id|subdomain>`, never during start/restart, initial registration, settings changes or script changes. New dynamic environments still build automatically when lamp creates their checkout; adopted dynamic directories only build on explicit request
+- `lamp add --restore-worktree-after-build` restores tracked files and the index to the pre-build commit only after a successful initial build of a clean Git clone created by that call for a dynamic environment. Untracked and ignored files stay. Existing directories, static environments, failed builds and later retries are never restored; a build that changes HEAD is refused restoration. The flag is not persisted and is not accepted by `lamp build`.
+- `lamp build` never performs an automatic Git restore or reset. Keep destructive Git commands out of shared build scripts. Restoring tracked build outputs also restores their committed versions; ensure those versions are usable by the application.
 - `lamp build` selects the registered environment containing the current directory (including subfolders); the closest project root wins. If no environment matches or the match is ambiguous, specify an id or subdomain.
 - Apache lists files and subdirectories when a webroot has no index file (`Options +Indexes`), as in the legacy setup. Project `.htaccess` rules still apply.
 - complete output goes to `/var/lib/lamp/environments/<id>/build.log` (mode 600); the path is printed at start and in the failure message, together with the environment hostname and id; `./lamp build <id>` shows it live between `🔨 … building` and `✅ … built in <n>s`

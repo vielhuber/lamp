@@ -1245,6 +1245,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         if reason != "build requested":
             print(f"🌐 {hostname} → {project} ({reason})", file=sys.stderr)
         git_environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": "ssh -o BatchMode=yes"}
+        restore_commit = None
         if project_owned and arguments.git is not None and not (project / ".git").exists():
             print(f"📥 {hostname}: cloning {arguments.git}", file=sys.stderr)
             clone = ["git", "clone", "--progress"]
@@ -1262,6 +1263,10 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
                 run(clone + ["--", arguments.git, str(project)], environment=git_environment, output=sys.stderr)
             if arguments.branch and branch != arguments.branch:
                 run(["git", "switch", "--create", arguments.branch], cwd=project)
+            if current is None and not subdomain_labels(desired) and getattr(arguments, "restore_worktree_after_build", False):
+                if run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=project, capture=True).strip():
+                    raise ValueError("Cannot enable worktree restoration: the initial clone is not clean.")
+                restore_commit = run(["git", "rev-parse", "HEAD"], cwd=project, capture=True).strip()
         elif project_owned and arguments.git and checkout and any(checkout[key] != desired[key] for key in ("git", "branch")):
             branch = arguments.branch
             if branch is None:
@@ -1325,6 +1330,11 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
                             raise RuntimeError(f"{hostname} ({identity}): bash failed (exit {process.returncode}). Build log: {log}")
                     finally:
                         environment = load_environment(identity)
+            if restore_commit is not None:
+                if run(["git", "rev-parse", "HEAD"], cwd=project, capture=True).strip() != restore_commit:
+                    raise ValueError("Cannot restore the worktree: HEAD changed during the build; changes were kept.")
+                run(["git", "restore", "--source=" + restore_commit, "--staged", "--worktree", "--", "."], cwd=project)
+                print(f"🧹 {hostname}: restored tracked files after the initial build", file=sys.stderr)
             # Services declared by the build in $LAMP_DATA_DIR/supervisor.conf start, restart or stop here.
             run(["supervisorctl", "reread"])
             run(["supervisorctl", "update"])
@@ -1431,6 +1441,7 @@ def main():
     create.add_argument("--php", choices=PHP_VERSIONS)
     create.add_argument("--vpn")
     create.add_argument("--build")
+    create.add_argument("--restore-worktree-after-build", action="store_true")
     create.add_argument("--subdomain")
     create.add_argument("--directory")
     create.add_argument("--db-name", dest="db_name")
