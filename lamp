@@ -233,6 +233,12 @@ docker_setup() {
 #     relayhost: '[smtp.example.com]:587'
 #     username: '<USER>'
 #     password: '<PASSWORD>'
+#     sender: noreply@example.com
+# for Office365, use relayhost '[smtp.office365.com]:587', username noreply@example.com,
+# and these three values instead of password (SMTP.SendAsApp and mailbox access required)
+#     oauth_tenant_id: '<TENANT_UUID>'
+#     oauth_client_id: '<CLIENT_UUID>'
+#     oauth_client_secret: '<CLIENT_SECRET>'
 
 # cloudflare api token (Account: Cloudflare Tunnel Edit, Access: Apps and Policies Edit, Access: Service Tokens Edit; Zone: Zone Read, DNS Edit, Cache Rules Edit)
 # and the login email allowed by cloudflare access; applied by ./lamp cloudflare-setup

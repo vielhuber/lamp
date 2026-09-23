@@ -20,7 +20,9 @@ import tempfile
 import termios
 import time
 import uuid
-from urllib.parse import urlsplit
+from urllib.error import URLError
+from urllib.parse import urlencode, urlsplit
+from urllib.request import Request, urlopen
 
 import yaml
 
@@ -102,7 +104,8 @@ def configuration():
         raise ValueError("setup.yaml must contain domain and optionally data; see README.md.")
     path = CONFIGURATION / "settings.yaml"
     value = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
-    sections = {"git": ("name", "email", "commit_key", "commit_url", "commit_model", "commit_effort"), "apache": ("admin",), "postfix": ("hostname", "relayhost", "username", "password"),
+    sections = {"git": ("name", "email", "commit_key", "commit_url", "commit_model", "commit_effort"), "apache": ("admin",),
+                "postfix": ("hostname", "relayhost", "username", "password", "sender", "oauth_tenant_id", "oauth_client_id", "oauth_client_secret"),
                 "cloudflare": ("token", "email"), "database": ("password",), "composer": ("github",)}
     if (not isinstance(value, dict) or set(value) - {"vpn", "php", *sections}
             or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", "php", *sections))):
@@ -122,9 +125,19 @@ def configuration():
                 or any(re.search(r"\s", entries[key]) for key in ("admin", "hostname", "relayhost", "token", "email", "github", "commit_key", "commit_url", "commit_model", "commit_effort") if key in entries)
                 or (section == "cloudflare" and entries and (set(entries) != set(keys) or "@" not in entries["email"]))
                 or ("hostname" in entries and not re.fullmatch(dns_name, entries["hostname"]))
-                or ("relayhost" in entries and not re.fullmatch(r"\[?[A-Za-z0-9.-]+\]?(?::[0-9]{1,5})?", entries["relayhost"]))
-                or (section == "postfix" and (("username" in entries) != ("password" in entries) or ("username" in entries and "relayhost" not in entries)))):
-            raise ValueError(f"{section} may contain only {', '.join(keys)} as nonempty single-line values; hostname must be a lowercase DNS name, relayhost a host or [host]:port, username and password need each other and a relayhost, cloudflare needs token and email.")
+                or ("relayhost" in entries and not re.fullmatch(r"\[?[A-Za-z0-9.-]+\]?(?::[0-9]{1,5})?", entries["relayhost"]))):
+            raise ValueError(f"{section} may contain only {', '.join(keys)} as nonempty single-line values; hostname must be a lowercase DNS name, relayhost a host or [host]:port, cloudflare needs token and email.")
+    postfix = value.get("postfix") or {}
+    oauth_keys = {"oauth_tenant_id", "oauth_client_id", "oauth_client_secret"}
+    oauth = bool(oauth_keys & postfix.keys())
+    if ((oauth and (not oauth_keys <= postfix.keys() or "password" in postfix or "username" not in postfix))
+            or (not oauth and (("username" in postfix) != ("password" in postfix)))
+            or ("username" in postfix and ("relayhost" not in postfix or re.search(r"[\s:]", postfix["username"])))
+            or any(not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", postfix[key])
+                   for key in ("oauth_tenant_id", "oauth_client_id") if key in postfix)
+            or any(not re.fullmatch(r"[A-Za-z0-9_.+-]+@[A-Za-z0-9.-]+", postfix[key])
+                   for key in ("sender", *(["username"] if oauth else [])) if key in postfix)):
+        raise ValueError("postfix needs a relayhost and username with either password or all three oauth_* values; OAuth IDs must be UUIDs, sender and OAuth username email addresses.")
     return value
 
 
@@ -146,20 +159,62 @@ def apply_settings(settings):
             subprocess.run(["git", "config", "--global", "--unset-all", option], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     admin = (settings.get("apache") or {}).get("admin", "webmaster@localhost")
     APACHE_SETTINGS.write_text(f"Timeout 3000\nServerAdmin {admin}\nServerName localhost\n")
+    apply_postfix(settings)
+
+
+def apply_postfix(settings):
     hostname = (settings.get("postfix") or {}).get("hostname", "lamp.localdomain")
     MAILNAME.write_text(hostname + "\n")
     postfix = settings.get("postfix") or {}
     relayhost = postfix.get("relayhost", "")
+    oauth = "oauth_tenant_id" in postfix
+    token_path = SASL_PASSWORD.parent / "lamp-oauth.json"
+    if oauth:
+        refresh_postfix(settings)
+        run(["postconf", "-F", "smtp/unix/chroot=n"])
     run(["postconf", "-e", "myhostname = " + hostname, "relayhost = " + relayhost])
+    run(["postconf", "-e", "smtp_sasl_auth_enable = " + ("yes" if "username" in postfix else "no"),
+         "smtp_sasl_mechanism_filter = " + ("xoauth2" if oauth else ""),
+         "smtp_tls_security_level = " + ("verify" if oauth else "may"),
+         "sender_canonical_classes = envelope_sender, header_sender",
+         "sender_canonical_maps = " + ("static:" + postfix["sender"] if "sender" in postfix else "")])
     if "username" in postfix:
-        SASL_PASSWORD.write_text(f"{relayhost} {postfix['username']}:{postfix['password']}\n")
+        SASL_PASSWORD.touch(mode=0o600)
         SASL_PASSWORD.chmod(0o600)
+        SASL_PASSWORD.write_text(f"{relayhost} {postfix['username']}:{token_path if oauth else postfix['password']}\n")
         run(["postmap", str(SASL_PASSWORD)])
         if SASL_PASSWORD.with_suffix(".db").exists():
             SASL_PASSWORD.with_suffix(".db").chmod(0o600)
     else:
         SASL_PASSWORD.unlink(missing_ok=True)
         SASL_PASSWORD.with_suffix(".db").unlink(missing_ok=True)
+    if not oauth:
+        token_path.unlink(missing_ok=True)
+
+
+def refresh_postfix(settings):
+    postfix = settings.get("postfix") or {}
+    if "oauth_tenant_id" not in postfix:
+        return
+    request = Request("https://login.microsoftonline.com/" + postfix["oauth_tenant_id"] + "/oauth2/v2.0/token",
+                      data=urlencode({"client_id": postfix["oauth_client_id"], "client_secret": postfix["oauth_client_secret"],
+                                      "scope": "https://outlook.office365.com/.default", "grant_type": "client_credentials"}).encode())
+    try:
+        with urlopen(request, timeout=30) as response:
+            result = json.loads(response.read())
+    except (URLError, TimeoutError, json.JSONDecodeError):
+        raise RuntimeError("Postfix OAuth token request failed; check connectivity and the oauth_* settings.") from None
+    if (not isinstance(result, dict) or not isinstance(result.get("access_token"), str) or not result["access_token"]
+            or not isinstance(result.get("expires_in"), int) or result["expires_in"] <= 600):
+        raise RuntimeError("Postfix OAuth token response is missing a valid token or lifetime.")
+    token_path = SASL_PASSWORD.parent / "lamp-oauth.json"
+    with tempfile.TemporaryDirectory(dir=token_path.parent) as directory:
+        temporary = Path(directory) / token_path.name
+        write_json(temporary, {"access_token": result["access_token"], "expiry": str(int(time.time()) + result["expires_in"]),
+                               "refresh_token": ""})
+        shutil.chown(temporary, user="root", group="postfix")
+        temporary.chmod(0o640)
+        os.replace(temporary, token_path)
 
 
 def load_environment(identity):
@@ -1336,7 +1391,7 @@ def remove(identity):
 def main():
     parser = Parser()
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("prepare", "validate", "reconcile", "reset"):
+    for command in ("prepare", "validate", "reconcile", "reset", "postfix-setup", "postfix-refresh"):
         commands.add_parser(command)
     commands.add_parser("list").add_argument("--search")
     for command in ("show", "remove", "access"):
@@ -1433,6 +1488,14 @@ def main():
     with (STATE / "control.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         CONTROL_LOCK = lock
+        if arguments.command == "postfix-refresh":
+            refresh_postfix(settings)
+            return
+        if arguments.command == "postfix-setup":
+            apply_postfix(settings)
+            run(["postfix", "check"])
+            run(["postfix", "reload"])
+            return
         entries, original = read_desired()
         desired = desired_state(entries)
         validate_domains(desired, settings)

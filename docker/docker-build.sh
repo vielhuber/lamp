@@ -224,6 +224,18 @@ apt-get install -y ./powershell.deb
 step 'postfix'
 printf 'postfix postfix/mailname string lamp.localdomain\npostfix postfix/main_mailer_type select Internet Site\n' | debconf-set-selections
 apt-get install -y postfix mailutils libsasl2-modules
+apt-get install -y libcurl4-openssl-dev libjsoncpp-dev libsasl2-dev pandoc
+curl -fsSL https://codeload.github.com/tarickb/sasl-xoauth2/tar.gz/refs/tags/release-0.25 -o sasl-xoauth2.tar.gz
+printf '%s  sasl-xoauth2.tar.gz\n' '65acb6343f873529373e806da6d48863f222f3ea04959c5acc30d5543c79fbeb' | sha256sum -c -
+tar -xzf sasl-xoauth2.tar.gz
+cmake -S sasl-xoauth2-release-0.25 -B sasl-xoauth2-release-0.25/build \
+    -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_SYSCONFDIR=/etc \
+    -DCMAKE_INSTALL_LIBDIR="lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+cmake --build sasl-xoauth2-release-0.25/build -j2
+cmake --install sasl-xoauth2-release-0.25/build
+printf '%s\n' '{"client_id":"","client_secret":"","log_to_syslog_on_failure":false,"log_full_trace_on_failure":false}' > /etc/sasl-xoauth2.conf
+rm -rf sasl-xoauth2.tar.gz sasl-xoauth2-release-0.25
+printf '*/5 * * * * root /usr/bin/python3 /opt/lamp/control.py postfix-refresh 2>&1 | /usr/bin/logger -t lamp-postfix\n' > /etc/cron.d/lamp-postfix
 postconf -e 'myhostname = lamp.localdomain' 'mydestination =' 'relayhost =' \
     'smtp_sasl_auth_enable = yes' 'smtp_sasl_security_options = noanonymous' \
     'smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd' 'smtp_tls_security_level = may' \
