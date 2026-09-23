@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOYMENT_SCRIPT_VERSION=1
+DEPLOYMENT_SCRIPT_VERSION=2
 directory=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 if [[ ! -e "$directory/.git" && "${LAMP_DEPLOYMENT_REFRESHED:-0}" != 1 && "${1:-}" != presets ]] \
     && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
@@ -176,7 +176,7 @@ sync_data() {
     elif [[ "$data_result" != 0 ]]; then
         exit "$data_result"
     fi
-}
+} >&2
 preset() {
     local path=$1 mode=$2
     if [[ -e "$path" ]]; then

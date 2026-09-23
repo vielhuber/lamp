@@ -114,7 +114,8 @@ else:
                 self.assertEqual([], list(self.installation.glob('.lamp-update.*')))
 
     def test_older_unversioned_and_invalid_scripts_are_not_installed(self):
-        for candidate in ('#!/bin/bash\nDEPLOYMENT_SCRIPT_VERSION=0\n', '#!/bin/bash\necho legacy\n',
+        for candidate in ('#!/bin/bash\nDEPLOYMENT_SCRIPT_VERSION=0\n', '#!/bin/bash\nDEPLOYMENT_SCRIPT_VERSION=1\n',
+                          '#!/bin/bash\necho legacy\n',
                           '#!/bin/bash\nDEPLOYMENT_SCRIPT_VERSION=2\nif\n'):
             with self.subTest(candidate=candidate):
                 (self.image / 'lamp').write_text(candidate)

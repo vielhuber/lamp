@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -119,6 +120,19 @@ sync_data
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertFalse((self.root / 'prompted').exists())
         self.assertFalse((self.root / 'calls').exists())
+
+    def test_add_keeps_json_output_separate_from_data_repository_progress(self):
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                if existing:
+                    (self.root / 'data/.git').mkdir(parents=True, exist_ok=True)
+                script = self.script.replace('command=start', 'command=add')
+                script += "printf '%s\\n' '{\"id\":\"abcdef012345\",\"status\":\"ready\"}'\n"
+                result = subprocess.run(['bash', '-c', script], env=self.environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual({'id': 'abcdef012345', 'status': 'ready'}, json.loads(result.stdout))
+                self.assertIn('preparing data repository access', result.stderr)
 
     def test_dns_failure_is_retried_before_updating_data(self):
         (self.root / 'data/.git').mkdir(parents=True)
