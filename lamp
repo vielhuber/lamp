@@ -7,7 +7,7 @@ if (( $# )); then shift; fi
 json=false
 if [[ "$command" = status || "$command" = version ]] && [[ "${1:-}" = --json ]]; then json=true; shift; fi
 if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
-    printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build <id|subdomain>|syncdb <profile>|list [--search <term>]|show <id|subdomain>|branch|exec [<id|subdomain>] "<command>"|curl|access <id|subdomain>|remove <id|subdomain>|reset|ssh [<id|subdomain>]|cloudflare-setup|docker-build|docker-setup|presets|docker-reset' \
+    printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build <id|subdomain>|syncdb <profile>|list [--search <term>]|show <id|subdomain>|branch|exec [<id|subdomain>] "<command>"|curl|access <id|subdomain>|remove <id|subdomain>|reset|audit|ssh [<id|subdomain>]|cloudflare-setup|docker-build|docker-setup|presets|docker-reset' \
         'docker-setup is run by the first start of a new installation: it asks for the domain, an optional private data repository and whether to add phpmyadmin, creates .config with setup.yaml and env.yaml, docker/docker-compose.override.yml with the projects mount and, without a data repository, .data with a commented settings.yaml and example files for syncdb and build scripts; with a data repository it tries host SSH access first and asks for a private key only if that fails; existing files are kept.' \
         'reset removes every dynamic environment with its checkout under _environments and its isolated databases; static environments stay. docker-reset is something else: it deletes all volumes.' \
         'presets writes the boilerplate .config/env.yaml and docker/docker-compose.override.yml when they are missing; init runs it.' \
@@ -18,6 +18,7 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
         'list --search <term> returns only environments whose values contain the term (case-insensitive).' \
         'add [--git <repository>] [--id <12-hex-id>] [--branch <branch>] [--base-branch <branch>] [--php <version>] [--vpn <profile>] [--build <command>] [--subdomain <label>] [--directory <name>] [--db-name <name>] [--db-engine mysql|postgres|sqlite] [--alias <suffix> ...] [--webroot <directory>] [--proxy-port <port>] [--proxy-exclude <path>] [--visibility private|public]' \
         'exec [<id|subdomain>] "<command>": with an id or subdomain inside that environment (project directory, its php, database variables, authenticated curl), without an id as root in the container.' \
+        'audit: check /var/www inside the container for missing GitHub repositories, folders without Git, static LAMP environments, dependency/runtime versions and Git changes; clean repositories with remote changes are pulled with --ff-only.' \
         'ssh [<id|subdomain>]: interactive root shell; with an environment it starts in the project directory with its variables and shows git status first.' \
         'branch <id|subdomain> <branch> [--base <branch>] [--operation switch|rename]' \
         'curl <id|subdomain> -- <curl arguments>; access <id|subdomain> (secret JSON for trusted integrations only)' \
@@ -30,7 +31,7 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
 fi
 arguments_valid=true
 case "$command" in
-    docker-setup|presets|docker-build|docker-reset|cloudflare-setup|start|restart|stop|reset|status|version) (( $# == 0 )) || arguments_valid=false ;;
+    docker-setup|presets|docker-build|docker-reset|cloudflare-setup|start|restart|stop|reset|status|version|audit) (( $# == 0 )) || arguments_valid=false ;;
     ssh) (( $# <= 1 )) || arguments_valid=false ;;
     build|syncdb|remove|show|access) (( $# == 1 )) || arguments_valid=false ;;
     list) (( $# == 0 )) || [[ "$#" = 2 && "$1" = --search ]] || arguments_valid=false ;;
@@ -558,6 +559,14 @@ case "$command" in
         phase=container
         printf '🐳 starting the container: databases, settings, cloudflare tunnel and certificate (a first start takes a few minutes)\n'
         "${compose[@]}" up -d --no-build --wait --wait-timeout 240
+        if command -v gh >/dev/null 2>&1 && github_token=$(gh auth token --hostname github.com 2>/dev/null); then
+            if printf '%s\n' "$github_token" | "${compose[@]}" exec -T app bash -c 'umask 077; gh auth login --hostname github.com --git-protocol ssh --skip-ssh-key --with-token --insecure-storage' >/dev/null 2>&1; then
+                printf '🔐 GitHub CLI: using the host authentication\n'
+            else
+                printf '⚠️ Could not apply the host GitHub CLI authentication.\n' >&2
+            fi
+        fi
+        unset github_token
         printf '🐳 container is healthy, applying .config/env.yaml\n'
         phase=environments
         if [[ -f "$directory/.config/initial-environments" ]]; then
@@ -567,6 +576,7 @@ case "$command" in
         fi
         ;;
     stop) "${compose[@]}" stop ;;
+    audit) "${compose[@]}" exec "${tty[@]}" app bash /opt/lamp/audit.sh ;;
     ssh)
         if [[ "$#" = 1 ]]; then
             shown=$("${compose[@]}" exec -T app python3 /opt/lamp/control.py show "$1") || exit 1
