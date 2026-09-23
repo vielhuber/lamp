@@ -22,9 +22,18 @@ class AuditTest(unittest.TestCase):
         source = (ROOT / 'docker/scripts/audit.sh').read_text()
         self.script = source.replace('/var/www', str(self.projects)).replace('/etc/lamp-config/env.yaml', str(self.config))
         self.environment = {**os.environ, 'PATH': str(self.root / 'bin') + ':' + os.environ['PATH'],
-                            'TEST_ROOT': str(self.root), 'TEST_REPOSITORIES': '', 'TEST_DIRTY': '',
+                            'TEST_ROOT': str(self.root), 'TEST_REPOSITORIES': '', 'TEST_ORGANIZATIONS': '',
+                            'TEST_ORGANIZATION_REPOSITORIES': '', 'TEST_DIRTY': '',
                             'TEST_BEHIND': '0', 'TEST_DIVERGED': '0', 'TEST_FETCH': '0'}
-        self.executable('gh', 'printf "%s\\n" "$TEST_REPOSITORIES"')
+        self.executable('gh', '''
+if [[ "$1 $2" = 'org list' ]]; then
+    printf '%s\\n' "$TEST_ORGANIZATIONS"
+elif [[ "$3" = vielhuber ]]; then
+    printf '%s\\n' "$TEST_REPOSITORIES"
+else
+    printf '%s\\n' "$TEST_ORGANIZATION_REPOSITORIES"
+fi
+''')
         self.executable('git', '''
 project=$2
 shift 2
@@ -122,6 +131,25 @@ esac
         output = self.invoke()
         self.assertIn('Analyzing 5 projects', output)
         self.assertEqual(5, output.count('[lamp missing]'))
+
+    def test_organization_repositories_are_listed_and_checked(self):
+        project = self.project('rzvdb', registered=False)
+        (project / '.origin').write_text('git@github.com:RZV-Hovawart/rzvdb.git')
+        output = self.invoke(TEST_ORGANIZATIONS='rzv-hovawart',
+                             TEST_ORGANIZATION_REPOSITORIES='rzvdb url\nrzvdb-server-script url')
+        self.assertIn('rzvdb-server-script [not cloned]', output)
+        self.assertIn('1 repositories missing locally.', output)
+        self.assertIn('Analyzing 1 projects', output)
+        self.assertRegex(output, r'rzvdb\s+\[lamp missing\]')
+        self.assertIn('rzvdb fetch', (self.root / 'git-calls').read_text())
+
+    def test_failed_organization_repository_lookup_remains_visible(self):
+        self.executable('gh', '''
+if [[ "$1 $2" = 'org list' ]]; then printf 'rzv-hovawart\\n';
+elif [[ "$3" = rzv-hovawart ]]; then exit 1;
+fi
+''')
+        self.assertIn('GitHub repository check failed', self.invoke())
 
     def test_dirty_and_failed_fetch_repositories_are_never_pulled(self):
         self.project('project')

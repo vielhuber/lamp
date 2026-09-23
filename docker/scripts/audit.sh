@@ -13,13 +13,16 @@ audit_own_repository() {
     local remote
     remote=$(git -C "$1" remote get-url origin 2>/dev/null) || return 0
     if [[ "${remote,,}" =~ ^(git@github\.com:|https?://github\.com/|ssh://git@github\.com/)([^/]+)/ ]]; then
-        [[ "${BASH_REMATCH[2]}" = vielhuber ]]
+        [[ "${BASH_REMATCH[2]}" = vielhuber ]] || grep -Fxiq -- "${BASH_REMATCH[2]}" <<< "$organizations"
         return
     fi
     return 0
 }
 
-if repositories=$(gh repo list vielhuber --limit 10000 --json name,sshUrl --jq '.[] | "\(.name) \(.sshUrl)"' | sort); then
+if organizations=$(gh org list --limit 10000) && repositories=$(while IFS= read -r owner; do
+    [[ -n "$owner" ]] || continue
+    gh repo list "$owner" --limit 10000 --json name,sshUrl --jq '.[] | "\(.name) \(.sshUrl)"' || exit 1
+done <<< "$(printf '%s\n' vielhuber "$organizations" | sort -u)" | sort -u); then
     missing=0
     while read -r name url; do
         [[ -z "$name" || "$name" = setup || "$name" = vielhuber ]] && continue
