@@ -294,7 +294,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - generation reads each checkout's `origin`, sets branch `main`, private visibility, PHP from `.phprc` or `8.5`, and its existing directory; it does not switch checkout branches. Subdomains use lowercase folder names with non-DNS characters replaced by hyphens, trimming leading/trailing hyphens; collisions fail. Webroot is the first existing `_public`, `public`, `new`, `html/br-kk`, or `.`.
 - database settings come from literal `syncdb <profile>` calls in the matching data build script (`engine` and `target.database`; SQLite uses the filename without extension). Without syncdb, `postgres` outside comments selects PostgreSQL with the normalized name; otherwise there is no database. Conflicting profiles fail. `nebro` gets VPN profile `nebro` only when enabled in settings. No build override, aliases or proxy settings are added.
 - generation is implemented in Bash and uses the container's configured data folder. It registers all entries in one controller call and uses the existing reconciliation batch: two Access checks for the entire set, one connector check, one Apache reload and one PHP-FPM restart per used version. Build scripts are not executed. Pending registrations stay in `.config/initial-environments` and `.config/initial-environments.jsonl` until the batch succeeds; retries keep completed environments and apply only unfinished work. Build requests in older pending queues are ignored.
-- optional phpmyadmin: `https://github.com/phpmyadmin/phpmyadmin.git` on branch `STABLE` as subdomain `phpmyadmin`, private; uses `build/github.com-phpmyadmin-phpmyadmin.sh` from the configured data folder, without a build override
+- optional phpmyadmin: `https://github.com/phpmyadmin/phpmyadmin.git` on branch `STABLE` as subdomain `phpmyadmin`, private; its initial clone uses `--depth 1 --single-branch --no-tags` to download only the selected branch tip, without the large history. Other repositories keep their full history. Uses `build/github.com-phpmyadmin-phpmyadmin.sh` from the configured data folder, without a build override
 
 | key             | default         | meaning                                                                                                       |
 | --------------- | --------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -522,7 +522,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>logs and debugging</summary>
 
 - `.logs/<command>-<timestamp>-<random>.log` for `docker-build`, `docker-reset`, `start`, `restart` (ansi stripped, exit code included, container output since the start request appended)
-- `start` and `restart` print only status lines on the terminal (each begins with an emoji: what is being done, every applied environment, `✅` or `❌` with the reason); everything else, including builds of cloned environments, is in that log
+- `start` and `restart` print status lines and live Git clone progress (object transfer, resolving deltas and checkout) on the terminal; other command output is in that log. Static project build scripts do not run. Data repository clones also show progress.
 - `./lamp exec 'supervisorctl status'`; php errors in `/var/log/php-error.log`; xdebug profiles in `/tmp/xdebug` (`?XDEBUG_PROFILE=1` or `XDEBUG_PROFILE=1 php …`)
 - vpn client logs in `/var/log/supervisor/vpn-<name>.log`
 - project build logs in `/var/lib/lamp/environments/<id>/build.log`

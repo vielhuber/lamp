@@ -384,10 +384,10 @@ if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = sta
     chmod 700 "$directory/.logs"
     log_file=$(mktemp "$directory/.logs/$command-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX.log")
     exec 3>&1 4>&2
-    # start and restart show only the status lines, which begin with an emoji; the complete output goes to the log
+    # start and restart show status lines and Git progress; the complete output goes to the log
     terminal_lines() {
         if [[ "$command" = start || "$command" = restart ]]; then
-            LC_ALL=C grep --line-buffered -E '^(🚀|🐳|🌐|📥|🔨|📦|🔐|⚠️|✅|❌|👉)' || true
+            LC_ALL=C grep --line-buffered -E '^(🚀|🐳|🌐|📥|🔨|📦|🔐|⚠️|✅|❌|👉|(remote: )?(Enumerating objects|Counting objects|Compressing objects|Receiving objects|Resolving deltas|Updating files|Checking out files|Filtering content|Updating index):)' || true
         else
             cat
         fi

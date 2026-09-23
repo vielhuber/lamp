@@ -60,6 +60,29 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertEqual(2, raised.exception.code)
         self.assertEqual('❌ No environment has the subdomain nowhere; see ./lamp help\n', errors.getvalue())
 
+    def test_normal_repository_clone_keeps_history_and_streams_progress(self):
+        self.invoke('add', '--git', 'git@example.test:owner/project.git', '--branch', 'main', '--subdomain', 'project')
+        clone = next(call for call in self.run.call_args_list if call.args[0][:2] == ['git', 'clone'])
+        self.assertIn('--progress', clone.args[0])
+        self.assertNotIn('--depth', clone.args[0])
+        self.assertIs(control.sys.stderr, clone.kwargs.get('output'))
+
+    def test_phpmyadmin_clone_only_downloads_the_selected_branch_tip(self):
+        for number, repository in enumerate(('https://github.com/phpmyadmin/phpmyadmin.git',
+                                             'git@github.com:phpmyadmin/phpmyadmin.git')):
+            with self.subTest(repository=repository):
+                self.run.reset_mock()
+                self.invoke('add', '--git', repository, '--branch', 'STABLE', '--subdomain', f'phpmyadmin-{number}')
+                clone = next(call for call in self.run.call_args_list if call.args[0][:2] == ['git', 'clone'])
+                arguments = clone.args[0]
+                self.assertIn('--progress', arguments)
+                self.assertIn('--depth', arguments)
+                self.assertEqual('1', arguments[arguments.index('--depth') + 1])
+                self.assertIn('--single-branch', arguments)
+                self.assertIn('--no-tags', arguments)
+                self.assertEqual('STABLE', arguments[arguments.index('--branch') + 1])
+                self.assertIs(control.sys.stderr, clone.kwargs.get('output'))
+
     def test_existing_directory_is_adopted_without_build_until_build_is_requested(self):
         project = control.PROJECTS / 'existing'
         project.mkdir()

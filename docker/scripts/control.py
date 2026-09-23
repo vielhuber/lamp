@@ -1177,7 +1177,10 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         git_environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": "ssh -o BatchMode=yes"}
         if project_owned and arguments.git is not None and not (project / ".git").exists():
             print(f"📥 {hostname}: cloning {arguments.git}", file=sys.stderr)
-            clone = ["git", "clone"]
+            clone = ["git", "clone", "--progress"]
+            if arguments.git.rstrip("/").removesuffix(".git") in ("https://github.com/phpmyadmin/phpmyadmin",
+                                                                 "git@github.com:phpmyadmin/phpmyadmin"):
+                clone += ["--depth", "1", "--single-branch", "--no-tags"]
             branch = arguments.branch
             if branch and getattr(arguments, "base_branch", None):
                 found = run(["git", "ls-remote", "--heads", arguments.git, "refs/heads/" + branch], environment=git_environment, capture=True)
@@ -1186,7 +1189,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
             if branch:
                 clone += ["--branch", branch]
             with long_work():
-                run(clone + ["--", arguments.git, str(project)], environment=git_environment)
+                run(clone + ["--", arguments.git, str(project)], environment=git_environment, output=sys.stderr)
             if arguments.branch and branch != arguments.branch:
                 run(["git", "switch", "--create", arguments.branch], cwd=project)
         elif project_owned and arguments.git and checkout and any(checkout[key] != desired[key] for key in ("git", "branch")):
