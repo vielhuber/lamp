@@ -82,11 +82,11 @@ esac
         self.assertIn('Analyzing 0 projects', output)
 
     def test_mapping_exclusions_worktrees_hidden_folders_and_missing_lamp(self):
-        self.project('vielhuber')
+        (self.project('vielhuber') / '.origin').write_text('git@github.com:vielhuber/vielhuber.de.git')
         self.project('.hidden', registered=False)
         self.project('_archive', registered=False)
         (self.projects / '.plain').mkdir()
-        output = self.invoke(TEST_REPOSITORIES='setup url\nvielhuber url\nvielhuber.de url\nforgotten url')
+        output = self.invoke(TEST_REPOSITORIES='setup url\nvielhuber url\nvielhuber.de git@github.com:vielhuber/vielhuber.de.git\nforgotten git@github.com:vielhuber/forgotten.git')
         self.assertIn('forgotten [not cloned]', output)
         self.assertIn('1 repositories missing locally.', output)
         self.assertIn('.plain [no git]', output)
@@ -133,20 +133,58 @@ esac
         self.assertEqual(5, output.count('[lamp missing]'))
 
     def test_organization_repositories_are_listed_and_checked(self):
-        project = self.project('rzvdb', registered=False)
-        (project / '.origin').write_text('git@github.com:RZV-Hovawart/rzvdb.git')
-        output = self.invoke(TEST_ORGANIZATIONS='rzv-hovawart',
-                             TEST_ORGANIZATION_REPOSITORIES='rzvdb url\nrzvdb-server-script url')
-        self.assertIn('rzvdb-server-script [not cloned]', output)
+        project = self.project('local-project', registered=False)
+        (project / '.origin').write_text('git@github.com:Example-Org/project.git')
+        output = self.invoke(TEST_ORGANIZATIONS='example-org',
+                             TEST_ORGANIZATION_REPOSITORIES='project git@github.com:example-org/project.git\nmissing git@github.com:example-org/missing.git')
+        self.assertIn('missing [not cloned]', output)
         self.assertIn('1 repositories missing locally.', output)
         self.assertIn('Analyzing 1 projects', output)
-        self.assertRegex(output, r'rzvdb\s+\[lamp missing\]')
-        self.assertIn('rzvdb fetch', (self.root / 'git-calls').read_text())
+        self.assertRegex(output, r'local-project\s+\[lamp missing\]')
+        self.assertIn('local-project fetch', (self.root / 'git-calls').read_text())
+
+    def test_renamed_repositories_are_matched_by_origin_across_github_url_formats(self):
+        repositories = []
+        for index, remote in enumerate(['git@github.com:example-org/project-0.git',
+                                        'https://github.com/Example-Org/project-1',
+                                        'ssh://git@github.com/example-org/project-2.git',
+                                        'https://github.com/example-org/project-3.git/']):
+            project = self.project(f'local-folder-{index}')
+            (project / '.origin').write_text(remote)
+            repositories.append(f'project-{index} git@github.com:example-org/project-{index}.git')
+        output = self.invoke(TEST_ORGANIZATIONS='example-org',
+                             TEST_ORGANIZATION_REPOSITORIES='\n'.join(repositories))
+        self.assertNotIn('not cloned', output)
+        self.assertIn('4 projects are up to date.', output)
+
+    def test_matching_folder_names_do_not_hide_missing_origins_or_different_owners(self):
+        project = self.project('project')
+        (project / '.origin').write_text('git@github.com:another-owner/project.git')
+        self.project('without-origin')
+        output = self.invoke(TEST_REPOSITORIES='project git@github.com:vielhuber/project.git\nwithout-origin git@github.com:vielhuber/without-origin.git')
+        self.assertIn('project [not cloned]', output)
+        self.assertIn('without-origin [not cloned]', output)
+        self.assertIn('2 repositories missing locally.', output)
+
+    def test_missing_repository_check_excludes_archived_personal_and_organization_repositories(self):
+        self.executable('gh', '''
+if [[ "$1 $2" = 'org list' ]]; then
+    printf 'example-org\\n'
+else
+    printf '%s-active url\\n' "$3"
+    if [[ " $* " != *' --no-archived '* ]]; then printf '%s-archived url\\n' "$3"; fi
+fi
+''')
+        output = self.invoke()
+        self.assertIn('vielhuber-active [not cloned]', output)
+        self.assertIn('example-org-active [not cloned]', output)
+        self.assertNotIn('archived', output)
+        self.assertIn('2 repositories missing locally.', output)
 
     def test_failed_organization_repository_lookup_remains_visible(self):
         self.executable('gh', '''
-if [[ "$1 $2" = 'org list' ]]; then printf 'rzv-hovawart\\n';
-elif [[ "$3" = rzv-hovawart ]]; then exit 1;
+if [[ "$1 $2" = 'org list' ]]; then printf 'example-org\\n';
+elif [[ "$3" = example-org ]]; then exit 1;
 fi
 ''')
         self.assertIn('GitHub repository check failed', self.invoke())

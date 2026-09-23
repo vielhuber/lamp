@@ -8,6 +8,16 @@ audit_git_repository() {
     [[ -e "$1/.git" ]] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1
 }
 
+audit_repository_identity() {
+    local remote="${1,,}"
+    remote=${remote%/}
+    remote=${remote#git@github.com:}
+    remote=${remote#https://github.com/}
+    remote=${remote#http://github.com/}
+    remote=${remote#ssh://git@github.com/}
+    printf '%s\n' "${remote%.git}"
+}
+
 audit_own_repository() {
     audit_git_repository "$1" || return 1
     local remote
@@ -21,14 +31,19 @@ audit_own_repository() {
 
 if organizations=$(gh org list --limit 10000) && repositories=$(while IFS= read -r owner; do
     [[ -n "$owner" ]] || continue
-    gh repo list "$owner" --limit 10000 --json name,sshUrl --jq '.[] | "\(.name) \(.sshUrl)"' || exit 1
+    gh repo list "$owner" --no-archived --limit 10000 --json name,sshUrl --jq '.[] | "\(.name) \(.sshUrl)"' || exit 1
 done <<< "$(printf '%s\n' vielhuber "$organizations" | sort -u)" | sort -u); then
+    declare -A local_repositories=()
+    for directory in */; do
+        audit_git_repository "$directory" || continue
+        remote=$(git -C "$directory" remote get-url origin 2>/dev/null) || continue
+        [[ -n "$remote" ]] || continue
+        local_repositories["$(audit_repository_identity "$remote")"]=1
+    done
     missing=0
     while read -r name url; do
         [[ -z "$name" || "$name" = setup || "$name" = vielhuber ]] && continue
-        directory=$name
-        [[ "$name" = vielhuber.de ]] && directory=vielhuber
-        if ! audit_git_repository "./$directory"; then
+        if [[ ! -v local_repositories["$(audit_repository_identity "$url")"] ]]; then
             [[ "$missing" -eq 0 ]] && printf '\n🔎 GitHub repositories missing locally\n\n'
             printf '⛔ %s [not cloned]\n' "$name"
             missing=$((missing+1))
