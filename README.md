@@ -370,6 +370,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - python 3 with pip/venv (`python` is python 3); `python3.12` additionally at `/opt/python3.12`; no python 2, no node 10–16
 - ruby 3.1.2 via rvm, rust, go, gettext, pandoc, xvfb, wkhtmltopdf, imagemagick, ghostscript, tesseract (deu), ffmpeg, image optimizers, wp-cli, gh, svn
 - google chrome for puppeteer, `critical` and headless tests: `PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome` and `PUPPETEER_SKIP_DOWNLOAD=true` are set, so projects use the system browser instead of downloading one
+- Playwright is installed globally with Chromium, its headless shell and system dependencies for tools such as `critical` 9. Playwright versions require matching browser binaries; after upgrading a project's Playwright version, run its local `npx playwright install chromium` if a different browser revision is required.
 
 </details>
 

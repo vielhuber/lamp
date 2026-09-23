@@ -388,7 +388,8 @@ bash nvm-install.sh
     done
     nvm use --lts
     nvm alias default "$(nvm current)"
-    npm install -g npm-check-updates gulp-cli svgo @google/clasp corepack @openai/codex
+    npm install -g npm-check-updates gulp-cli svgo @google/clasp corepack @openai/codex playwright
+    playwright install --with-deps chromium
     corepack enable
     corepack prepare yarn@stable --activate
     ln -s "$(dirname "$(command -v node)")" /opt/lamp/node-tools
@@ -397,7 +398,7 @@ export PATH="/opt/lamp/node-tools:$PATH"
 ln -s /opt/lamp/node-tools/node /usr/local/bin/node
 ln -s /opt/lamp/node-tools/npm /usr/local/bin/npm
 ln -s /opt/lamp/node-tools/npx /usr/local/bin/npx
-for tool in ncu svgo clasp corepack codex yarn yarnpkg; do
+for tool in ncu svgo clasp corepack codex yarn yarnpkg playwright; do
     printf '#!/usr/bin/env bash\nexec /opt/lamp/node-tools/node /opt/lamp/node-tools/%s "$@"\n' "$tool" > "/usr/local/bin/$tool"
     chmod 755 "/usr/local/bin/$tool"
 done
