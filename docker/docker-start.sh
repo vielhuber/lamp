@@ -42,6 +42,8 @@ fi
 unset database_password
 
 #### apache/php/mysql
+# A stopped container can retain a PID file whose number is reused during the next start.
+rm -f /run/apache2/apache2.pid
 # Disable mod_php left in older images when using the updated entrypoint.
 for module in /etc/apache2/mods-enabled/php*.load; do
     if [[ -e "$module" ]]; then

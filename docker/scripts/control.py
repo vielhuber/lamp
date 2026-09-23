@@ -478,14 +478,26 @@ def project_path(identity, value):
     return project
 
 
+def project_identity(project):
+    # Device numbers can change after a WSL restart; the filesystem ID survives remounts.
+    return {"filesystem": os.statvfs(project).f_fsid, "inode": project.stat().st_ino}
+
+
 def environment_project(environment):
     project = project_path(environment["id"], environment)
     if str(project) != environment["path"]:
         raise ValueError("Stored project path does not match its environment.")
     if (environment.get("project_owned") or not subdomain_labels(environment)) and project.exists():
         status = project.stat()
-        if [status.st_dev, status.st_ino] != environment.get("project_identity"):
-            raise ValueError("The managed project directory was replaced; refusing to modify or delete it.")
+        stored = environment.get("project_identity")
+        actual = project_identity(project)
+        legacy = isinstance(stored, list)
+        if stored != ([status.st_dev, status.st_ino] if legacy else actual):
+            raise ValueError(f"{environment.get('hostname', environment['id'])} ({project}): "
+                             "The managed project directory was replaced; refusing to modify or delete it.")
+        if legacy:
+            environment["project_identity"] = actual
+            save_environment(environment)
     return project
 
 
@@ -1204,7 +1216,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         "hostnames": environment_hostnames(identity, desired, settings), "vpn": arguments.vpn, "visibility": desired["visibility"],
         "webroot": arguments.webroot, "proxy_port": arguments.proxy_port, "proxy_exclude": arguments.proxy_exclude,
         "hostname": hostname, "url": url, "path": str(project), "db_name": desired["db_name"], "db_engine": desired["db_engine"],
-        "project_owned": project_owned, "project_identity": [project.stat().st_dev, project.stat().st_ino],
+        "project_owned": project_owned, "project_identity": project_identity(project),
         "engine": (current.get("engine") or "mysql") if current else "mysql", "database": "lamp_" + identity,
         "password": current["password"] if current else secrets.token_hex(24), "status": "creating",
         "applied": applied or desired,

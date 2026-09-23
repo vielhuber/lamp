@@ -72,6 +72,8 @@ class ChatEnvironmentsTest(unittest.TestCase):
         project.mkdir()
         environment = {**self.environment, 'id': identity, 'path': str(project), 'status': 'failed',
                        'project_identity': [project.stat().st_dev, project.stat().st_ino]}
+        (control.STATE / 'environments' / identity).mkdir()
+        control.save_environment(environment)
         with patch.object(control, 'run', side_effect=AssertionError('Empty directory has no Git state')):
             control.check_checkout(environment, {**self.desired, 'branch': 'feature/existing'})
         self.assertEqual([], list(project.iterdir()))
@@ -83,6 +85,8 @@ class ChatEnvironmentsTest(unittest.TestCase):
         (project / 'keep.txt').write_text('keep')
         environment = {**self.environment, 'id': identity, 'path': str(project), 'status': 'failed',
                        'project_identity': [project.stat().st_dev, project.stat().st_ino]}
+        (control.STATE / 'environments' / identity).mkdir()
+        control.save_environment(environment)
         with self.assertRaisesRegex(RuntimeError, 'git failed'):
             control.check_checkout(environment, {**self.desired, 'branch': 'feature/existing'})
         self.assertEqual('keep', (project / 'keep.txt').read_text())

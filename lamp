@@ -86,15 +86,17 @@ sync_data() {
     "${in_container[@]}" bash -c 'set -euo pipefail
         if [[ ! -d /var/lib/lamp/data/.git ]]; then exit 3; fi
         export GIT_SSH_COMMAND="ssh -i /var/lib/lamp/data/ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/var/lib/lamp/data/ssh/known_hosts"
-        if git -C /var/lib/lamp/data fetch --quiet origin && git -C /var/lib/lamp/data reset --quiet --hard "@{upstream}"; then
-            # git keeps no private modes; ssh refuses keys that others can read
-            chmod -R go= /var/lib/lamp/data
-        else
-            exit 4
-        fi' < /dev/null || data_result=$?
+        for attempt in {1..5}; do
+            if git -C /var/lib/lamp/data fetch --quiet origin; then break; fi
+            if (( attempt == 5 )); then exit 4; fi
+            printf "⚠️ data fetch failed (attempt %s/5); retrying in 5 seconds\n" "$attempt" >&2
+            sleep 5
+        done
+        git -C /var/lib/lamp/data reset --quiet --hard "@{upstream}"
+        # git keeps no private modes; ssh refuses keys that others can read
+        chmod -R go= /var/lib/lamp/data' < /dev/null || data_result=$?
     if [[ "$data_result" = 4 ]]; then
-        printf '⚠️ the data repository %s could not be fetched; continuing with the last state\n' "$data_repository" >&2
-        data_result=0
+        printf '❌ The data repository %s could not be fetched after 5 attempts; aborting.\n' "$data_repository" >&2
     elif [[ "$data_result" = 0 && ( "$command" = start || "$command" = restart ) ]]; then
         printf '📦 data is up to date with %s\n' "$data_repository"
     fi

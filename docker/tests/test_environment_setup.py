@@ -234,6 +234,53 @@ class EnvironmentSetupTest(unittest.TestCase):
             control.remove(self.identity)
         self.assertEqual('foreign replacement', source.read_text())
 
+    def test_managed_directory_survives_device_renumbering(self):
+        self.invoke('add', '--id', self.identity, '--subdomain', 'managed')
+        environment = control.load_environment(self.identity)
+        project = Path(environment['path'])
+        original_stat = Path.stat
+
+        def remounted(path, *args, **kwargs):
+            status = original_stat(path, *args, **kwargs)
+            if path == project:
+                values = list(status)
+                values[2] += 32
+                return os.stat_result(values)
+            return status
+
+        with patch.object(Path, 'stat', remounted):
+            self.assertEqual(project, control.environment_project(environment))
+
+    def test_managed_directory_on_another_filesystem_is_rejected(self):
+        self.invoke('add', '--id', self.identity, '--subdomain', 'managed')
+        environment = control.load_environment(self.identity)
+        filesystem = os.statvfs(environment['path']).f_fsid
+        with patch.object(control.os, 'statvfs') as status:
+            status.return_value.f_fsid = filesystem + 1
+            with self.assertRaisesRegex(ValueError, 'managed.example.test.*replaced'):
+                control.environment_project(environment)
+
+    def test_verified_legacy_project_identity_is_migrated(self):
+        self.invoke('add', '--id', self.identity, '--subdomain', 'managed')
+        environment = control.load_environment(self.identity)
+        project = Path(environment['path'])
+        status = project.stat()
+        environment['project_identity'] = [status.st_dev, status.st_ino]
+        control.save_environment(environment)
+        self.assertEqual(project, control.environment_project(environment))
+        self.assertEqual({'filesystem': os.statvfs(project).f_fsid, 'inode': status.st_ino},
+                         control.load_environment(self.identity)['project_identity'])
+
+    def test_unverified_legacy_project_identity_is_not_migrated(self):
+        self.invoke('add', '--id', self.identity, '--subdomain', 'managed')
+        environment = control.load_environment(self.identity)
+        status = Path(environment['path']).stat()
+        environment['project_identity'] = [status.st_dev + 32, status.st_ino]
+        control.save_environment(environment)
+        with self.assertRaisesRegex(ValueError, 'managed.example.test.*replaced'):
+            control.environment_project(environment)
+        self.assertEqual(environment['project_identity'], control.load_environment(self.identity)['project_identity'])
+
     def test_legacy_adopted_environment_does_not_build_on_unchanged_start(self):
         project = control.PROJECTS / 'legacy'
         project.mkdir()

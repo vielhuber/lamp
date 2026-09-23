@@ -18,7 +18,20 @@ class DataRepositoryTest(unittest.TestCase):
         git = self.root / 'bin/git'
         git.write_text('''#!/bin/bash
 set -euo pipefail
-if [[ "$1" = -C ]]; then exit 0; fi
+if [[ "$1" = -C ]]; then
+    if [[ "$3" = fetch ]]; then
+        count=0
+        if [[ -f "$TEST_ROOT/fetch-count" ]]; then read -r count < "$TEST_ROOT/fetch-count"; fi
+        count=$((count + 1))
+        echo "$count" > "$TEST_ROOT/fetch-count"
+        if (( count <= ${TEST_FETCH_FAILURES:-0} )); then
+            echo 'ssh: Could not resolve hostname github.com' >&2
+            exit 128
+        fi
+    fi
+    if [[ "$3" = reset ]]; then touch "$TEST_ROOT/reset"; fi
+    exit 0
+fi
 target="${@: -1}"
 if [[ "$GIT_SSH_COMMAND" = *lamp-data-key* ]]; then
     echo pasted >> "$TEST_ROOT/calls"
@@ -34,6 +47,9 @@ mkdir -p "$target/.git"
 printf 'repository data' > "$target/settings.yaml"
 ''')
         git.chmod(0o755)
+        sleep = self.root / 'bin/sleep'
+        sleep.write_text('#!/bin/sh\necho "$1" >> "$TEST_ROOT/sleeps"\n')
+        sleep.chmod(0o755)
         source = LAMP.read_text()
         functions = source[source.index('require_docker() {'):source.index('\npreset() {')]
         functions = functions.replace('/var/lib/lamp/data', str(self.root / 'data'))
@@ -103,6 +119,25 @@ sync_data
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertFalse((self.root / 'prompted').exists())
         self.assertFalse((self.root / 'calls').exists())
+
+    def test_dns_failure_is_retried_before_updating_data(self):
+        (self.root / 'data/.git').mkdir(parents=True)
+        result = self.invoke(TEST_FETCH_FAILURES='2')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual('3\n', (self.root / 'fetch-count').read_text())
+        self.assertEqual(['5', '5'], (self.root / 'sleeps').read_text().splitlines())
+        self.assertTrue((self.root / 'reset').exists())
+        self.assertFalse((self.root / 'prompted').exists())
+
+    def test_persistent_dns_failure_aborts_instead_of_using_stale_data(self):
+        (self.root / 'data/.git').mkdir(parents=True)
+        result = self.invoke(TEST_FETCH_FAILURES='99')
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual('5\n', (self.root / 'fetch-count').read_text())
+        self.assertEqual(['5'] * 4, (self.root / 'sleeps').read_text().splitlines())
+        self.assertFalse((self.root / 'reset').exists())
+        self.assertFalse((self.root / 'prompted').exists())
+        self.assertNotIn('continuing with the last state', result.stderr)
 
 
 if __name__ == '__main__':
