@@ -422,8 +422,12 @@ class EnvironmentSetupTest(unittest.TestCase):
         project = control.PROJECTS / 'logged'
         value = control.validate_specification({'subdomain': 'logged', 'build': 'echo progress; echo problem >&2; exit 3'})
         self.invoke('add', '--id', self.identity, '--subdomain', 'logged', '--build', value['build'])
-        with self.assertRaisesRegex(RuntimeError, 'Build log: .*/environments/abcdef012345/build.log'):
+        with patch.object(control, 'print', create=True) as messages, \
+             self.assertRaisesRegex(RuntimeError, 'Build log: .*/environments/abcdef012345/build.log') as raised:
             self.invoke('build', 'logged')
+        self.assertIn('logged.example.test (abcdef012345): bash failed (exit 3)', str(raised.exception))
+        messages.assert_any_call('❌ logged.example.test (abcdef012345) failed; fix the reported error and retry',
+                                 file=control.sys.stderr)
         log = control.STATE / 'environments' / self.identity / 'build.log'
         self.assertIn('+ echo progress\nprogress\n', log.read_text())
         self.assertIn('problem\n', log.read_text())

@@ -335,7 +335,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - `.data/build/<host>-<repository path with / replaced by ->.sh`, e.g. `github.com-owner-project.sh` for `git@github.com:owner/project.git` and `https://github.com/owner/project.git`
 - sourced by bash with `set -e` in the checkout, the selected php first on `PATH`, node lts, the variables below and a `syncdb` function
 - static environments (including phpMyAdmin) only run scripts on `./lamp build <id|subdomain>`, never during start/restart, initial registration, settings changes or script changes. New dynamic environments still build automatically when lamp creates their checkout; adopted dynamic directories only build on explicit request
-- complete output goes to `/var/lib/lamp/environments/<id>/build.log` (mode 600); the path is printed at start and in the failure message; `./lamp build <id>` shows it live between `🔨 … building` and `✅ … built in <n>s`
+- complete output goes to `/var/lib/lamp/environments/<id>/build.log` (mode 600); the path is printed at start and in the failure message, together with the environment hostname and id; `./lamp build <id>` shows it live between `🔨 … building` and `✅ … built in <n>s`
 - no build runs without a script or `build` setting
 - `./lamp docker-setup` writes the example `.data/build/github.com-owner-project.sh`: syncdb import, `.env` created from an embedded heredoc with `APP_URL` and `DB_*` rewritten from the setup variables, then composer and npm; copy it per project and keep only the steps the project has
 

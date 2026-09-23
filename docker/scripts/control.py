@@ -1252,7 +1252,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
                         finally:
                             os.close(master)
                         if process.wait():
-                            raise RuntimeError(f"bash failed (exit {process.returncode}). Build log: {log}")
+                            raise RuntimeError(f"{hostname} ({identity}): bash failed (exit {process.returncode}). Build log: {log}")
                     finally:
                         environment = load_environment(identity)
             # Services declared by the build in $LAMP_DATA_DIR/supervisor.conf start, restart or stop here.
@@ -1303,7 +1303,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
                 pass
         else:
             batch["reload"] = True
-        print(f"❌ environment {identity} failed; correct its yaml settings and restart, or remove it", file=sys.stderr)
+        print(f"❌ {hostname} ({identity}) failed; fix the reported error and retry", file=sys.stderr)
         raise
     return show(environment)
 
