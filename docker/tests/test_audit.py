@@ -281,14 +281,15 @@ printf '{"critical":"^9.0.0"}'
         (self.root / '.config/setup.yaml').write_text('domain: example.test\n')
         (self.root / 'docker').mkdir()
         (self.root / 'docker/docker-compose.override.yml').write_text('services: {}\n')
-        self.executable('docker', 'printf "%s\\n" "$*" >> "$TEST_ROOT/docker-calls"')
+        self.executable('docker', 'printf "%s\\n" "$*" >> "$TEST_ROOT/docker-calls"\nif [[ "$1" = image ]]; then exit 1; fi')
         result = subprocess.run(['bash', str(self.root / 'lamp'), 'audit'], env=self.environment,
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(0, result.returncode, result.stderr)
         calls = (self.root / 'docker-calls').read_text().splitlines()
-        self.assertEqual(2, len(calls))
-        self.assertTrue(calls[1].endswith('exec -T app bash /opt/lamp/audit.sh'))
-        self.assertNotIn('build', calls[1])
+        self.assertEqual(4, len(calls))
+        self.assertEqual(['info', 'image inspect ghcr.io/vielhuber/lamp:latest', 'info'], calls[:3])
+        self.assertTrue(calls[3].endswith('exec -T app bash /opt/lamp/audit.sh'))
+        self.assertNotIn('build', calls[3])
 
 
 if __name__ == '__main__':

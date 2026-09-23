@@ -1,7 +1,48 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+DEPLOYMENT_SCRIPT_VERSION=1
 directory=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
+if [[ ! -e "$directory/.git" && "${LAMP_DEPLOYMENT_REFRESHED:-0}" != 1 && "${1:-}" != presets ]] \
+    && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
+    && docker image inspect ghcr.io/vielhuber/lamp:latest >/dev/null 2>&1; then
+    if deployment_container=$(docker create ghcr.io/vielhuber/lamp:latest) && [[ -n "$deployment_container" ]]; then
+        deployment_directory=$(mktemp -d "$directory/.lamp-update.XXXXXXXX")
+        trap 'docker rm "$deployment_container" >/dev/null; rm -rf -- "$deployment_directory"' EXIT
+        deployment_changed=false
+        if docker cp "$deployment_container:/app/lamp" "$deployment_directory/lamp" >/dev/null 2>&1; then
+            candidate_version=$(sed -n 's/^DEPLOYMENT_SCRIPT_VERSION=\([0-9][0-9]*\)$/\1/p' "$deployment_directory/lamp")
+            if [[ "$candidate_version" =~ ^[0-9]+$ ]] && (( candidate_version >= DEPLOYMENT_SCRIPT_VERSION )) \
+                && bash -n "$deployment_directory/lamp" 2>/dev/null; then
+                mkdir -p "$deployment_directory/docker/scripts"
+                if docker cp "$deployment_container:/app/docker/docker-compose.yml" "$deployment_directory/docker/docker-compose.yml" >/dev/null 2>&1 \
+                    && docker cp "$deployment_container:/app/docker/docker-compose.data.yml" "$deployment_directory/docker/docker-compose.data.yml" >/dev/null 2>&1 \
+                    && docker cp "$deployment_container:/opt/lamp/vscode.py" "$deployment_directory/docker/scripts/vscode.py" >/dev/null 2>&1; then
+                    deployment_files=(docker/docker-compose.yml docker/docker-compose.data.yml docker/scripts/vscode.py lamp)
+                    for deployment_file in "${deployment_files[@]}"; do
+                        if ! cmp -s "$deployment_directory/$deployment_file" "$directory/$deployment_file"; then deployment_changed=true; fi
+                    done
+                    if [[ "$deployment_changed" = true ]]; then
+                        chmod 755 "$deployment_directory/lamp"
+                        mkdir -p "$directory/docker/scripts"
+                        for deployment_file in "${deployment_files[@]}"; do
+                            mv -f -- "$deployment_directory/$deployment_file" "$directory/$deployment_file"
+                        done
+                    fi
+                else
+                    printf '%s\n' '⚠️ Could not refresh the LAMP host files; keeping the current installation.' >&2
+                fi
+            fi
+        fi
+        docker rm "$deployment_container" >/dev/null
+        rm -rf -- "$deployment_directory"
+        trap - EXIT
+        if [[ "$deployment_changed" = true ]]; then
+            printf '%s\n' '📦 LAMP host files updated from the local image.' >&2
+            exec env LAMP_DEPLOYMENT_REFRESHED=1 "$directory/lamp" "$@"
+        fi
+    fi
+fi
 command=${1:-help}
 if (( $# )); then shift; fi
 json=false
