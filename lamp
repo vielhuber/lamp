@@ -8,7 +8,7 @@ json=false
 if [[ "$command" = status || "$command" = version ]] && [[ "${1:-}" = --json ]]; then json=true; shift; fi
 if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
     printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build <id|subdomain>|syncdb <profile>|list [--search <term>]|show <id|subdomain>|branch|exec [<id|subdomain>] "<command>"|curl|access <id|subdomain>|remove <id|subdomain>|reset|ssh [<id|subdomain>]|cloudflare-setup|docker-build|docker-setup|presets|docker-reset' \
-        'docker-setup is run by the first start of a new installation: it asks for the domain, an optional private data repository and whether to add phpmyadmin, creates .config with setup.yaml and env.yaml, docker/docker-compose.override.yml with the projects mount and, without a data repository, .data with a commented settings.yaml and example files for syncdb and build scripts; with a data repository it asks once for a private ssh key and clones the data into the container; existing files are kept.' \
+        'docker-setup is run by the first start of a new installation: it asks for the domain, an optional private data repository and whether to add phpmyadmin, creates .config with setup.yaml and env.yaml, docker/docker-compose.override.yml with the projects mount and, without a data repository, .data with a commented settings.yaml and example files for syncdb and build scripts; with a data repository it tries host SSH access first and asks for a private key only if that fails; existing files are kept.' \
         'reset removes every dynamic environment with its checkout under _environments and its isolated databases; static environments stay. docker-reset is something else: it deletes all volumes.' \
         'presets writes the boilerplate .config/env.yaml and docker/docker-compose.override.yml when they are missing; init runs it.' \
         'The final setup question can generate initial environments from existing Git checkouts (default /var/www); registered directories stay, new entries use main and private visibility, and matching shared build scripts run once after startup.' \
@@ -55,7 +55,7 @@ configured_data_repository() {
     if [[ "$value" = null || "$value" = '~' ]]; then value=; fi
     printf '%s' "$value"
 }
-# with a data repository /etc/lamp is a clone inside the container (state volume): cloned once with a pasted key, mirrored from the repository afterwards
+# with a data repository /etc/lamp is a clone inside the container (state volume), mirrored from the repository afterwards
 read_data_key() {
     local line
     if ! { : < /dev/tty; } 2> /dev/null; then
@@ -75,9 +75,10 @@ read_data_key() {
 sync_data() {
     local in_container data_result
     require_docker
-    # a one-off container sees the mounts of the next start; build, syncdb and add need the running container anyway; the later flag silences compose
-    in_container=("${compose[@]}" --progress quiet run --rm --no-deps -T app)
+    # a one-off container sees the mounts of the next start; build, syncdb and add need the running container anyway
+    in_container=("${compose[@]}" run --rm --no-deps -T app)
     if [[ "$command" = build || "$command" = syncdb || "$command" = add ]]; then in_container=("${compose[@]}" exec -T app); fi
+    printf '📦 preparing data repository access: %s\n' "$data_repository"
     data_result=0
     "${in_container[@]}" bash -c 'set -euo pipefail
         if [[ ! -d /var/lib/lamp/data/.git ]]; then exit 3; fi
@@ -95,18 +96,35 @@ sync_data() {
         printf '📦 data is up to date with %s\n' "$data_repository"
     fi
     if [[ "$data_result" = 3 ]]; then
-        if [[ -z "${data_key:-}" ]]; then read_data_key; fi
         data_result=0
-        printf '%s' "$data_key" | "${in_container[@]}" bash -c 'set -euo pipefail
+        (
             umask 077
-            trap "rm -f /dev/shm/lamp-data-key" EXIT
-            cat > /dev/shm/lamp-data-key
-            GIT_SSH_COMMAND="ssh -i /dev/shm/lamp-data-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR" git clone --quiet "$1" /var/lib/lamp/data
-            chmod -R go= /var/lib/lamp/data' lamp "$data_repository" || data_result=$?
-        data_key=
+            data_checkout=$(mktemp -d) || exit 1
+            trap 'rm -rf -- "$data_checkout"' EXIT
+            printf '📥 cloning %s with host SSH access\n' "$data_repository"
+            GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
+                git clone --progress -- "$data_repository" "$data_checkout/data" || exit 3
+            printf '📦 transferring data repository into the container\n'
+            tar -C "$data_checkout/data" -cf - . | "${in_container[@]}" bash -c 'set -euo pipefail
+                umask 077
+                mkdir -p /var/lib/lamp/data
+                tar -xf - -C /var/lib/lamp/data
+                chmod -R go= /var/lib/lamp/data' || exit 1
+        ) || data_result=$?
+        if [[ "$data_result" = 3 ]]; then
+            read_data_key
+            data_result=0
+            printf '%s' "$data_key" | "${in_container[@]}" bash -c 'set -euo pipefail
+                umask 077
+                trap "rm -f /dev/shm/lamp-data-key" EXIT
+                cat > /dev/shm/lamp-data-key
+                GIT_SSH_COMMAND="ssh -i /dev/shm/lamp-data-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR" git clone --progress "$1" /var/lib/lamp/data
+                chmod -R go= /var/lib/lamp/data' lamp "$data_repository" || data_result=$?
+            data_key=
+        fi
         if [[ "$data_result" != 0 ]]; then
-            printf '❌ The data repository could not be cloned with this key.\n' >&2
-            exit 1
+            printf '❌ The data repository could not be cloned into the container.\n' >&2
+            exit "$data_result"
         fi
         printf '📦 cloned %s\n' "$data_repository"
     elif [[ "$data_result" != 0 ]]; then
@@ -177,13 +195,12 @@ docker_setup() {
     if [[ -e "$config/setup.yaml" ]]; then
         data_repository=$(configured_data_repository)
     elif { : < /dev/tty; } 2> /dev/null; then
-        read -r -p 'Domain of the environments (https://<subdomain>.<domain>): ' domain < /dev/tty
+        read -r -p 'Domain of the environments (<domain> in https://<subdomain>.<domain>): ' domain < /dev/tty
         read -r -p 'Private git repository with the data of this instance (ssh url, empty for a local .data folder): ' data_repository < /dev/tty
         if [[ -n "$data_repository" && ! "$data_repository" =~ ^git@[A-Za-z0-9.-]+:[A-Za-z0-9_./-]+$ ]]; then
             printf '%s\n' '❌ The data repository must be an ssh url like git@github.com:<owner>/lamp-data.git.' >&2
             exit 2
         fi
-        if [[ -n "$data_repository" ]]; then read_data_key; fi
     fi
     write_presets
     setup="domain: ${domain:-example.com}"

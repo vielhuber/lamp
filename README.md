@@ -44,7 +44,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - `sudo ln -s "$(pwd -P)/lamp" /usr/local/bin/lamp`
 - optional: list your environments in `.config/env.yaml` and adjust the projects mount (default `/var/www`) in `docker/docker-compose.override.yml`
 - `./lamp start`
-    - the first start asks for the domain, an optional private [data repository](#data-repository) and its ssh key, then creates tunnel, dns record, access application, service token, cache rule and certificate on its own
+    - the first start asks for the domain and an optional private [data repository](#data-repository); it asks for an ssh key only if host SSH access fails, then creates tunnel, dns record, access application, service token, cache rule and certificate on its own
     - `Set up phpMyAdmin? [y/N]` adds its private environment to `env.yaml` only on confirmation; its build comes from the configured data folder
     - the final question, `Generate initial environments from folder`, suggests `/var/www`: accept to register its Git checkouts and run their shared build scripts after startup, or clear the input to skip
     - without a data repository it stops after writing the presets: set `cloudflare.token` and `cloudflare.email` in `.data/settings.yaml` and run `./lamp start` again
@@ -269,10 +269,10 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>data repository</summary>
 
 - `data: git@github.com:<owner>/lamp-data.git` in `.config/setup.yaml` replaces the `.data` folder by that private repository: `settings.yaml`, `ssh/`, `vpn/`, `build/`, `syncdb/` are the same on every host, only `.config` differs
-- lamp keeps its own clone inside the container at `/var/lib/lamp/data` (state volume), `/etc/lamp` links to it; nothing appears on the host; `docker-reset` deletes it with the rest of the state, the next `start` asks for the key again
+- lamp keeps its own clone inside the container at `/var/lib/lamp/data` (state volume), `/etc/lamp` links to it; `docker-reset` deletes it with the rest of the state, the next `start` clones it again
 - maintain the data in a normal clone anywhere (e.g. `/var/www/lamp-data`), commit and push; lamp never commits or pushes
-- `./lamp docker-setup` asks for the repository, writes the entry, creates no `.data` and clones right away: it asks once on the terminal for a private ssh key that may read the repository (not echoed, not logged, handed to the container through a pipe and deleted after the clone)
-- when the clone is missing later (after `docker-reset`, or when `data` was added to an existing installation by hand, which needs `./lamp stop` and `./lamp start`), the next `start`, `restart` or `cloudflare-setup` asks for the key again
+- `./lamp docker-setup` asks for the repository, writes the entry, creates no `.data` and clones right away using the host's SSH configuration, keys and agent without prompting; the temporary host checkout is transferred into the container and deleted afterwards. Only if host access fails does it ask for a private ssh key (not echoed, not logged, handed to the container through a pipe and deleted after the clone)
+- when the clone is missing later (after `docker-reset`, or when `data` was added to an existing installation by hand, which needs `./lamp stop` and `./lamp start`), the next `start`, `restart` or `cloudflare-setup` tries host SSH access before asking for a key again
 - `start`, `restart`, `cloudflare-setup`, `build`, `syncdb` and `add` mirror the repository first (`git fetch` and `git reset --hard` with `ssh/id_rsa` of the clone), so a pushed build script is used by the next `./lamp build <id>` without a restart; when the fetch fails, a warning is printed and the last state is used
 - after every clone and fetch the folder is set to owner-only modes, because git stores no private modes and ssh refuses readable keys
 - the repository contains private keys, vpn profiles, api tokens and production database credentials; keep it private
