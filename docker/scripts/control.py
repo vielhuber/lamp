@@ -963,7 +963,7 @@ def vhost(environment):
     settings = f'''    ServerName {hostname}
 {aliases}    DocumentRoot "{root}"
 {variables}    <Directory "{root}">
-        Options -Indexes +FollowSymLinks
+        Options +Indexes +FollowSymLinks
         AllowOverride All
         CGIPassAuth On
         Require all granted

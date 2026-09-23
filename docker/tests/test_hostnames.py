@@ -104,6 +104,7 @@ class HostnamesTest(unittest.TestCase):
             self.assertIn('    SetEnv LAMP_DATA_DIR "' + str(root / 'environments' / identity / 'data') + '"\n', vhost)
             self.assertEqual(1, vhost.count('ServerAlias ' + ' '.join(environment['hostnames'][1:])))
             self.assertEqual(1, vhost.count('DocumentRoot "' + environment['document_root'] + '"'))
+            self.assertIn('Options +Indexes +FollowSymLinks', vhost)
             self.assertEqual(1, vhost.count('<VirtualHost *:443>'))
             self.assertIn('SSLCertificateFile "/etc/letsencrypt/live/example.test/fullchain.pem"', vhost)
             self.assertNotIn('8081', vhost)

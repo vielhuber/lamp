@@ -166,7 +166,7 @@ phpdismod uopz
 
 #### apache extensions
 step 'apache extensions'
-a2enmod rewrite ssl vhost_alias authz_groupfile headers cache expires actions alias \
+a2enmod rewrite ssl vhost_alias authz_groupfile headers cache expires actions alias autoindex \
     proxy_fcgi proxy proxy_html proxy_http xml2enc
 
 #### configs
