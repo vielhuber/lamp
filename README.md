@@ -524,6 +524,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>ssh</summary>
 
 - `.data/ssh/` is the container's `/root/.ssh`: `id_rsa` (default identity and git signing key), `config`, `known_hosts`; directory 700, files 600
+- commits and tags are signed with SSH (`commit.gpgsign=true`, `tag.gpgsign=true`). Push certificates are disabled (`push.gpgsign=false`); they are separate from commit signatures and require support from the receiving server.
 - verify unknown hosts interactively with `./lamp ssh` before a non-interactive `add`
 - git hooks from `docker/git-hooks/` are installed globally via `core.hooksPath`; repository-local hook paths override them
 - `./lamp ssh` is `docker exec`; no ssh server port is published; `./lamp ssh <id|subdomain>` sources the environment's `setup.env`, changes into the project and runs `git status` before the shell
