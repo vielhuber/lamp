@@ -405,7 +405,7 @@ cat >> /root/.bashrc <<'NODE'
 # global tools stay available when selecting a different project runtime
 export PATH="$PATH:/opt/lamp/node-tools"
 # npm-check-updates
-alias ncu='/usr/local/bin/ncu --retry 0 --timeout 5000'
+alias ncu='/usr/local/bin/ncu --retry 0 --timeout 60000'
 NODE
 
 #### yarn
