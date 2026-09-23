@@ -11,6 +11,7 @@ docker/*
 !docker/scripts/
 docker/scripts/*
 !docker/scripts/audit.sh
+!docker/scripts/vscode.py
 !docker/scripts/cloudflare.py
 !docker/scripts/control.py
 !docker/scripts/curl.py

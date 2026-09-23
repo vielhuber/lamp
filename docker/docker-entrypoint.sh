@@ -19,19 +19,21 @@ if [[ ! -d /install ]]; then
     exit 1
 fi
 
-# init only ships the host cli and compose files; .data and .config are never touched, so it also refreshes an existing installation.
+# init only ships the host cli, its helper and compose files; .data and .config are never touched, so it also refreshes an existing installation.
 temporary_directory="/install/.lamp-init.$$"
 trap 'rm -rf "$temporary_directory"' EXIT INT TERM
-mkdir "$temporary_directory" "$temporary_directory/docker"
+mkdir -p "$temporary_directory/docker/scripts"
 cp /app/lamp "$temporary_directory/lamp"
 cp /app/docker/docker-compose.yml /app/docker/docker-compose.data.yml "$temporary_directory/docker/"
+cp /opt/lamp/vscode.py "$temporary_directory/docker/scripts/"
 chmod 755 "$temporary_directory/lamp"
 if [[ "$(id -u)" -eq 0 ]]; then
     chown -hR "$(stat -c '%u:%g' /install)" "$temporary_directory"
 fi
-mkdir -p /install/docker
+mkdir -p /install/docker/scripts
 mv -f "$temporary_directory/lamp" /install/lamp
 mv -f "$temporary_directory/docker/docker-compose.yml" "$temporary_directory/docker/docker-compose.data.yml" /install/docker/
+mv -f "$temporary_directory/docker/scripts/vscode.py" /install/docker/scripts/
 rm -rf "$temporary_directory"
 trap - EXIT INT TERM
 
