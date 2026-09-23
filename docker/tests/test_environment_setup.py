@@ -449,6 +449,34 @@ class EnvironmentSetupTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'not found'):
             self.invoke('build', 'abcdef012346')
 
+    def test_build_by_directory_uses_registered_environment_from_root_or_subfolder(self):
+        project = control.PROJECTS / 'project-folder'
+        (project / 'folder with spaces').mkdir(parents=True)
+        self.invoke('add', '--subdomain', 'different-name', '--directory', project.name,
+                    '--build', 'printf built >> build-result.txt')
+        self.invoke('build', '--directory', str(project))
+        self.invoke('build', '--directory', str(project / 'folder with spaces'))
+        self.assertEqual('builtbuilt', (project / 'build-result.txt').read_text())
+
+    def test_build_by_unregistered_directory_does_not_build_other_projects(self):
+        project = control.PROJECTS / 'project'
+        project.mkdir()
+        self.invoke('add', '--subdomain', 'project', '--build', 'touch build-result.txt')
+        with self.assertRaisesRegex(ValueError, 'No environment.*directory'):
+            self.invoke('build', '--directory', str(control.PROJECTS / 'project-other'))
+        self.assertFalse((project / 'build-result.txt').exists())
+
+    def test_build_by_directory_selects_closest_project_root(self):
+        project = control.PROJECTS / 'parent'
+        child = project / 'child'
+        child.mkdir(parents=True)
+        self.invoke('add', '--subdomain', 'parent', '--build', 'touch build-result.txt')
+        self.invoke('add', '--subdomain', 'child', '--directory', 'parent/child',
+                    '--build', 'touch build-result.txt')
+        self.invoke('build', '--directory', str(child))
+        self.assertTrue((child / 'build-result.txt').exists())
+        self.assertFalse((project / 'build-result.txt').exists())
+
     def test_list_search_filters_environments_by_any_value(self):
         other = 'abcdef012346'
         (control.PROJECTS / 'alpha').mkdir()

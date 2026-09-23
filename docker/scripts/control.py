@@ -1336,8 +1336,11 @@ def main():
     for command in ("prepare", "validate", "reconcile", "reset"):
         commands.add_parser(command)
     commands.add_parser("list").add_argument("--search")
-    for command in ("show", "remove", "access", "build"):
+    for command in ("show", "remove", "access"):
         commands.add_parser(command).add_argument("id", type=identity_argument)
+    build = commands.add_parser("build").add_mutually_exclusive_group(required=True)
+    build.add_argument("id", nargs="?", type=identity_argument)
+    build.add_argument("--directory", type=Path)
     execute = commands.add_parser("exec")
     execute.add_argument("id", type=identity_argument)
     execute.add_argument("script")
@@ -1614,6 +1617,16 @@ def main():
             print(f"✅ {arguments.profile} imported")
             return
         elif arguments.command == "build":
+            if arguments.directory is not None:
+                directory = arguments.directory.resolve()
+                matches = [item for item in environments() if directory.is_relative_to(Path(item["path"]).resolve())]
+                if not matches:
+                    raise ValueError(f"No environment is registered for directory {directory}; specify an id or subdomain.")
+                depth = max(len(Path(item["path"]).resolve().parts) for item in matches)
+                matches = [item for item in matches if len(Path(item["path"]).resolve().parts) == depth]
+                if len(matches) != 1:
+                    raise ValueError(f"Multiple environments match directory {directory}; specify an id or subdomain.")
+                arguments.id = matches[0]["id"]
             identity = validate_identity(arguments.id)
             load_environment(identity)
             if identity not in desired:

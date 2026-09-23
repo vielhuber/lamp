@@ -7,13 +7,13 @@ if (( $# )); then shift; fi
 json=false
 if [[ "$command" = status || "$command" = version ]] && [[ "${1:-}" = --json ]]; then json=true; shift; fi
 if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
-    printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build <id|subdomain>|syncdb <profile>|list [--search <term>]|show <id|subdomain>|branch|exec [<id|subdomain>] "<command>"|curl|access <id|subdomain>|remove <id|subdomain>|reset|audit|code|ssh [<id|subdomain>]|cloudflare-setup|docker-build|docker-setup|presets|docker-reset' \
+    printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build [<id|subdomain>]|syncdb <profile>|list [--search <term>]|show <id|subdomain>|branch|exec [<id|subdomain>] "<command>"|curl|access <id|subdomain>|remove <id|subdomain>|reset|audit|code|ssh [<id|subdomain>]|cloudflare-setup|docker-build|docker-setup|presets|docker-reset' \
         'docker-setup is run by the first start of a new installation: it asks for the domain, an optional private data repository and whether to add phpmyadmin, creates .config with setup.yaml and env.yaml, docker/docker-compose.override.yml with the projects mount and, without a data repository, .data with a commented settings.yaml and example files for syncdb and build scripts; with a data repository it tries host SSH access first and asks for a private key only if that fails; existing files are kept.' \
         'reset removes every dynamic environment with its checkout under _environments and its isolated databases; static environments stay. docker-reset is something else: it deletes all volumes.' \
         'presets writes the boilerplate .config/env.yaml and docker/docker-compose.override.yml when they are missing; init runs it.' \
         'The final setup question can generate initial environments from existing Git checkouts (default /var/www); registered directories stay, new entries use main and private visibility. Static environments only run build scripts on explicit lamp build requests, never during start/restart or initial registration.' \
         'cloudflare-setup creates or verifies the tunnel, the wildcard dns record, the Access application with its policies, the service token and the cache bypass rule with cloudflare.token from settings.yaml.' \
-        'build <id|subdomain> reruns the configured build of an existing environment inside the running container; docker-build rebuilds the image without layer cache.' \
+        'build [<id|subdomain>] reruns the configured build inside the running container; without an argument it selects the environment containing the current directory; docker-build rebuilds the image without layer cache.' \
         'syncdb <profile> runs a .data/syncdb profile unchanged inside the container; its target must point at the container databases (localhost, root, database.password).' \
         'list --search <term> returns only environments whose values contain the term (case-insensitive).' \
         'add [--git <repository>] [--id <12-hex-id>] [--branch <branch>] [--base-branch <branch>] [--php <version>] [--vpn <profile>] [--build <command>] [--subdomain <label>] [--directory <name>] [--db-name <name>] [--db-engine mysql|postgres|sqlite] [--alias <suffix> ...] [--webroot <directory>] [--proxy-port <port>] [--proxy-exclude <path>] [--visibility private|public]' \
@@ -33,8 +33,8 @@ fi
 arguments_valid=true
 case "$command" in
     docker-setup|presets|docker-build|docker-reset|cloudflare-setup|start|restart|stop|reset|status|version|audit|code) (( $# == 0 )) || arguments_valid=false ;;
-    ssh) (( $# <= 1 )) || arguments_valid=false ;;
-    build|syncdb|remove|show|access) (( $# == 1 )) || arguments_valid=false ;;
+    ssh|build) (( $# <= 1 )) || arguments_valid=false ;;
+    syncdb|remove|show|access) (( $# == 1 )) || arguments_valid=false ;;
     list) (( $# == 0 )) || [[ "$#" = 2 && "$1" = --search ]] || arguments_valid=false ;;
     exec) (( $# >= 1 && $# <= 2 )) || arguments_valid=false ;;
     curl|branch) ;;
@@ -42,6 +42,7 @@ case "$command" in
     *) printf '❌ Unknown command: %s; see ./lamp help\n' "$command" >&2; exit 2 ;;
 esac
 if [[ "$arguments_valid" = false ]]; then printf '❌ Wrong arguments for %s; see ./lamp help\n' "$command" >&2; exit 2; fi
+if [[ "$command" = build && $# == 0 ]]; then set -- --directory "$PWD"; fi
 compose=(docker compose --ansi never --progress plain --project-directory "$directory/docker" -f "$directory/docker/docker-compose.yml")
 require_docker() {
     if docker info > /dev/null 2>&1; then return; fi
