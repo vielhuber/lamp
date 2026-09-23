@@ -449,6 +449,19 @@ class EnvironmentSetupTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'not found'):
             self.invoke('build', 'abcdef012346')
 
+    def test_node_access_preload_keeps_existing_node_options_without_credentials(self):
+        with patch.dict(os.environ, {'NODE_OPTIONS': '--max-old-space-size=2048'}):
+            self.invoke('add', '--id', self.identity, '--subdomain', 'browser')
+            environment = control.load_environment(self.identity)
+            variables = control.build_environment(environment)
+        self.assertEqual('--max-old-space-size=2048 --require=/opt/lamp/node-access.cjs', variables['NODE_OPTIONS'])
+        setup = Path(environment['setup_environment']).read_text()
+        self.assertIn('export NODE_OPTIONS=', setup)
+        self.assertIn('--require=/opt/lamp/node-access.cjs', setup)
+        self.assertNotIn('CF-Access-Client-Secret', setup)
+        with patch.dict(os.environ, {'NODE_OPTIONS': variables['NODE_OPTIONS']}):
+            self.assertEqual(variables['NODE_OPTIONS'], control.build_environment(environment)['NODE_OPTIONS'])
+
     def test_build_by_directory_uses_registered_environment_from_root_or_subfolder(self):
         project = control.PROJECTS / 'project-folder'
         (project / 'folder with spaces').mkdir(parents=True)

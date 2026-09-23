@@ -15,6 +15,7 @@ docker/scripts/*
 !docker/scripts/cloudflare.py
 !docker/scripts/control.py
 !docker/scripts/curl.py
+!docker/scripts/node-access.cjs
 !docker/scripts/healthcheck.sh
 !docker/scripts/initial-environments.sh
 !docker/scripts/vpn.py

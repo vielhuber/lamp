@@ -851,6 +851,9 @@ def build_environment(environment):
     curl.chmod(0o700)
     variables["PATH"] = str(bin_directory) + ":" + os.environ["PATH"].removeprefix(str(bin_directory) + ":")
     variables["COMPOSER_ALLOW_SUPERUSER"] = "1"
+    preload = "--require=/opt/lamp/node-access.cjs"
+    node_options = os.environ.get("NODE_OPTIONS", "")
+    variables["NODE_OPTIONS"] = node_options if preload in node_options.split() else (node_options + " " + preload).strip()
     return variables
 
 
