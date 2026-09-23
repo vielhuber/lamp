@@ -87,24 +87,13 @@ if [[ ! -e "$pending" ]]; then
         arguments=(--git "$remote" --branch main --php "$php" --subdomain "$subdomain" --directory "$directory" --webroot "$webroot" --visibility private)
         if [[ "$name" = nebro && "$nebro_vpn" = true ]]; then arguments+=(--vpn nebro); fi
         if [[ -n "$engine" ]]; then arguments+=(--db-name "$database" --db-engine "$engine"); fi
-        has_build=false
-        if [[ -f "$build" ]]; then has_build=true; fi
-        jq -cn --arg subdomain "$subdomain" --argjson build "$has_build" \
-            '$ARGS.positional | {arguments: ., subdomain: $subdomain, build: $build}' --args -- "${arguments[@]}" >> "$temporary"
+        jq -cn --arg subdomain "$subdomain" \
+            '$ARGS.positional | {arguments: ., subdomain: $subdomain}' --args -- "${arguments[@]}" >> "$temporary"
     done < <(find "$folder" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
     mv "$temporary" "$pending"
 fi
 
-while IFS= read -r entry < "$pending"; do
-    mapfile -d '' -t arguments < <(jq -j '.arguments[] | ., "\u0000"' <<< "$entry")
-    subdomain=$(jq -r '.subdomain' <<< "$entry")
-    echo "📥 registering initial environment $subdomain"
-    python3 "$controller" add "${arguments[@]}" > /dev/null
-    if [[ $(jq -r '.build' <<< "$entry") = true ]]; then
-        python3 "$controller" build "$subdomain"
-    fi
-    tail -n +2 "$pending" > "$temporary"
-    mv "$temporary" "$pending"
-done
+echo '📥 registering initial environments'
+python3 "$controller" register-initial "$pending"
 rm -- "$pending" "$config/initial-environments"
 echo '✅ initial environments generated'

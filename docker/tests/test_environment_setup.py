@@ -84,6 +84,48 @@ class EnvironmentSetupTest(unittest.TestCase):
         control.reconcile(self.settings, control.desired_state(control.read_desired()[0]))
         self.assertFalse(any(call.args[0][0] in ('bash', 'chown', 'mysql', 'psql') for call in self.run.call_args_list))
 
+    def test_new_static_environment_and_failed_build_only_build_on_explicit_request(self):
+        project = control.PROJECTS / 'manual'
+        self.invoke('add', '--id', self.identity, '--subdomain', 'manual', '--build', 'printf built > build-result.txt')
+        self.assertFalse((project / 'build-result.txt').exists())
+        self.assertEqual('ready', control.load_environment(self.identity)['status'])
+        self.assertIsNone(control.load_environment(self.identity)['build_hash'])
+        self.vhost.assert_called()
+        self.invoke('build', 'manual')
+        self.assertEqual('built', (project / 'build-result.txt').read_text())
+        value = control.validate_specification({'subdomain': 'manual', 'build': 'exit 7'})
+        _, original = control.read_desired()
+        control.write_desired([value], original)
+        control.reconcile(self.settings, {self.identity: value})
+        self.assertEqual('built', (project / 'build-result.txt').read_text())
+        with self.assertRaisesRegex(RuntimeError, 'bash failed'):
+            self.invoke('build', 'manual')
+        self.assertEqual('failed', control.load_environment(self.identity)['status'])
+        control.reconcile(self.settings, {self.identity: value})
+        self.assertEqual('ready', control.load_environment(self.identity)['status'])
+        self.assertEqual('built', (project / 'build-result.txt').read_text())
+
+    def test_shared_script_changes_do_not_rebuild_or_reconfigure_static_environments(self):
+        remote = 'git@example.test:owner/project.git'
+        script = control.build_script(remote)
+        script.parent.mkdir()
+        script.write_text('printf automatic > build-result.txt\n')
+        value = control.validate_specification({'git': remote, 'subdomain': 'manual'})
+        control.reconcile(self.settings, {self.identity: value})
+        project = control.PROJECTS / 'manual'
+        self.assertFalse((project / 'build-result.txt').exists())
+        self.vhost.reset_mock()
+        script.write_text('exit 1\n')
+        with patch.object(control, 'resolve_build', side_effect=AssertionError('Static startup must not load a build script')):
+            control.reconcile(self.settings, {self.identity: value})
+        self.vhost.assert_not_called()
+        self.assertFalse((project / 'build-result.txt').exists())
+
+    def test_new_dynamic_environment_still_builds_automatically(self):
+        self.invoke('add', '--id', self.identity, '--build', 'printf dynamic > build-result.txt')
+        project = control.PROJECTS / '_environments' / self.identity
+        self.assertEqual('dynamic', (project / 'build-result.txt').read_text())
+
     def test_yaml_add_uses_repository_script_without_changing_existing_git_checkout(self):
         project = control.PROJECTS / 'existing'
         project.mkdir()
@@ -106,13 +148,17 @@ class EnvironmentSetupTest(unittest.TestCase):
 
     def test_failed_project_build_retries_without_recreating_databases(self):
         project = control.PROJECTS / 'created'
-        value = control.validate_specification({'subdomain': 'created', 'build': 'exit 1'})
+        remote = 'git@example.test:owner/project.git'
+        script = control.build_script(remote)
+        script.parent.mkdir()
+        script.write_text('exit 1\n')
+        self.invoke('add', '--id', self.identity, '--git', remote, '--subdomain', 'created')
         with self.assertRaisesRegex(RuntimeError, 'bash failed'):
-            control.reconcile(self.settings, {self.identity: value})
+            self.invoke('build', 'created')
         self.assertEqual('failed', control.load_environment(self.identity)['status'])
-        value['build'] = 'printf recovered > build-result.txt'
+        script.write_text('printf recovered > build-result.txt\n')
         self.run.reset_mock()
-        control.reconcile(self.settings, {self.identity: value})
+        self.invoke('build', 'created')
         self.assertEqual('recovered', (project / 'build-result.txt').read_text())
         self.assertFalse(any(call.args[0][0] in ('mysql', 'psql') for call in self.run.call_args_list))
 
@@ -125,6 +171,9 @@ class EnvironmentSetupTest(unittest.TestCase):
                     project.mkdir()
                 value = control.validate_specification({'subdomain': [label, label + '-alias'], 'build': 'printf built > keep.txt'})
                 control.reconcile(self.settings, {self.identity: value})
+                if not adopted:
+                    control.write_desired([value], None)
+                    self.invoke('build', label)
                 self.run.reset_mock()
                 if adopted:
                     control.reconcile(self.settings, {})
@@ -349,14 +398,18 @@ class EnvironmentSetupTest(unittest.TestCase):
     def test_build_output_is_written_to_a_private_log_named_in_the_failure(self):
         project = control.PROJECTS / 'logged'
         value = control.validate_specification({'subdomain': 'logged', 'build': 'echo progress; echo problem >&2; exit 3'})
+        self.invoke('add', '--id', self.identity, '--subdomain', 'logged', '--build', value['build'])
         with self.assertRaisesRegex(RuntimeError, 'Build log: .*/environments/abcdef012345/build.log'):
-            control.reconcile(self.settings, {self.identity: value})
+            self.invoke('build', 'logged')
         log = control.STATE / 'environments' / self.identity / 'build.log'
         self.assertIn('+ echo progress\nprogress\n', log.read_text())
         self.assertIn('problem\n', log.read_text())
         self.assertEqual(0o600, log.stat().st_mode & 0o777)
         value['build'] = 'echo fixed'
+        _, original = control.read_desired()
+        control.write_desired([value], original)
         control.reconcile(self.settings, {self.identity: value})
+        self.invoke('build', 'logged')
         self.assertIn('fixed\n', log.read_text())
         self.assertEqual('ready', control.load_environment(self.identity)['status'])
 

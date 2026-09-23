@@ -585,8 +585,6 @@ def apply_entry(settings, identity, value, environment, batch):
         reason = "domain changed, new url " + environment_url(identity, value, settings)
     elif environment["php"] != resolve_php(environment_project(environment), value["php"]):
         reason = "php version changed"
-    elif environment.get("project_owned") and environment.get("build_hash") != resolve_build(value)[1]:
-        reason = "build script changed, rebuilding"
     if reason is not None:
         add(argparse.Namespace(**value), settings, identity, environment, reason=reason, batch=batch)
     elif environment.get("visibility") != value["visibility"] or specification(environment) != value:
@@ -1117,7 +1115,9 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
     if batch is None:
         sync_visibility(settings, {identity: desired}, identities={identity}, publish=False)
     project_owned = current.get("project_owned", False) if current else not project.exists()
-    build, build_hash = resolve_build(desired)
+    build, build_hash = (None, current.get("build_hash") if current else None)
+    if force_build or not subdomain_labels(desired):
+        build, build_hash = resolve_build(desired)
     # a reconcile run keeps control.lock; a single add or build gives it up while it clones, imports and builds
     long_work = unlocked if batch is None else contextlib.nullcontext
     ensure_vpn(desired["vpn"])
@@ -1217,7 +1217,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         save_environment(environment)
         os.umask(0o077)
         variables = write_setup(environment)
-        # Adopted directories are never built automatically; lamp build <id> is the explicit way.
+        # Static environments and adopted directories only build on explicit request.
         if build is not None and (project_owned or force_build):
             log = directory / "build.log"
             print(f"🔨 {hostname}: building in {project} · log: {log}", file=sys.stderr)
@@ -1346,6 +1346,7 @@ def main():
     commands.add_parser("syncdb").add_argument("profile")
     commands.add_parser("db_engine").add_argument("engine", choices=("mysql", "postgres"))
     commands.add_parser("sync").add_argument("profile")
+    commands.add_parser("register-initial").add_argument("pending", type=Path)
     create = commands.add_parser("add")
     create.add_argument("--git")
     create.add_argument("--id", type=validate_identity)
@@ -1449,8 +1450,7 @@ def main():
                 pending = bool(subdomain_labels(specification(environment))) and (
                     desired.get(environment["id"]) != specification(environment)
                     or environment["url"] != environment_url(environment["id"], desired[environment["id"]], settings)
-                    or environment["php"] != resolve_php(environment_project(environment), desired[environment["id"]]["php"])
-                    or (environment.get("project_owned") and environment.get("build_hash") != resolve_build(desired[environment["id"]])[1]))
+                    or environment["php"] != resolve_php(environment_project(environment), desired[environment["id"]]["php"]))
                 if environment["status"] != "ready" or pending:
                     (ENABLED / ("lamp-" + environment["id"] + ".conf")).unlink(missing_ok=True)
                 else:
@@ -1534,6 +1534,21 @@ def main():
             environment["commit"] = run(["git", "rev-parse", "HEAD"], cwd=project, capture=True).strip()
             save_environment(environment)
             result = show(environment)
+        elif arguments.command == "register-initial":
+            count = len(entries)
+            for line in arguments.pending.read_text().splitlines():
+                requested = create.parse_args(json.loads(line)["arguments"])
+                value = validate_specification({key: getattr(requested, key) for key in ("git", *ENVIRONMENT_DEFAULTS)})
+                if not subdomain_labels(value):
+                    raise ValueError("Initial registration requires static environments with a subdomain.")
+                if value not in entries:
+                    entries.append(value)
+            desired = desired_state(entries)
+            validate_domains(desired, settings)
+            if len(entries) != count:
+                write_desired(entries, original)
+            reconcile(settings, desired)
+            return
         elif arguments.command == "add":
             identity = arguments.id or uuid.uuid4().hex[:12]
             if arguments.base_branch:

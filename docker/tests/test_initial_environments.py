@@ -26,14 +26,30 @@ control.HOSTS = root / 'hosts'
 with (root / 'calls').open('a') as calls:
     calls.write(json.dumps(sys.argv[1:]) + '\\n')
 if sys.argv[1] == 'build':
-    sys.exit(1 if sys.argv[2] == os.environ.get('TEST_FAIL_BUILD') else 0)
+    raise AssertionError('Initial registration must not execute builds')
+def configure_vhost(environment):
+    with (root / 'configured').open('a') as configured:
+        configured.write(environment['subdomain'] + '\\n')
+    if environment['subdomain'] == os.environ.get('TEST_FAIL_ENVIRONMENT'):
+        raise RuntimeError('Vhost setup failed')
+
 with contextlib.ExitStack() as stack:
+    mocks = {}
     for name, value in [('run', ''), ('sync_visibility', None), ('connector', True),
                         ('vhost', None), ('reload_apache', None), ('ensure_vpn', None)]:
-        stack.enter_context(patch.object(control, name, return_value=value))
+        mocks[name] = stack.enter_context(patch.object(control, name, return_value=value,
+                                                     side_effect=configure_vhost if name == 'vhost' else None))
     exists = Path.exists
     stack.enter_context(patch.object(Path, 'exists', lambda path: str(path) == '/.dockerenv' or exists(path)))
-    control.main()
+    try:
+        control.main()
+    finally:
+        (root / 'metrics').write_text(json.dumps({
+            'access_checks': mocks['sync_visibility'].call_count,
+            'apache_reloads': mocks['reload_apache'].call_count,
+            'connector_checks': mocks['connector'].call_count,
+            'php_restarts': [call.args[0] for call in mocks['run'].call_args_list
+                             if call.args[0][:2] == ['supervisorctl', 'restart']]}))
 '''
 
 
@@ -120,7 +136,7 @@ class InitialEnvironmentsTest(unittest.TestCase):
         self.assertEqual(('postgres', 'postgres'), (entries['postgres']['db_engine'], entries['postgres']['db_name']))
         self.assertIsNone(entries['plain']['db_name'])
         builds = [call[1] for call in self.calls() if call[0] == 'build']
-        self.assertEqual(['my-repo', 'nebro', 'plain', 'postgres', 'sqlite'], builds)
+        self.assertEqual([], builds)
         calls = self.calls()
         self.assertEqual(0, self.invoke().returncode)
         self.assertEqual(calls, self.calls())
@@ -145,18 +161,56 @@ class InitialEnvironmentsTest(unittest.TestCase):
         self.assertIn('different databases', result.stderr)
         self.assertEqual([], self.calls())
 
-    def test_failed_build_resumes_without_rebuilding_completed_projects(self):
+    def test_failed_registration_resumes_without_repeating_completed_projects(self):
         self.project('first', 'echo build\n')
         self.project('second', 'echo build\n')
-        self.environment['TEST_FAIL_BUILD'] = 'second'
+        self.environment['TEST_FAIL_ENVIRONMENT'] = 'second'
         result = self.invoke()
         self.assertNotEqual(0, result.returncode)
         self.assertTrue((self.root / 'config/initial-environments').exists())
-        self.environment.pop('TEST_FAIL_BUILD')
+        self.environment.pop('TEST_FAIL_ENVIRONMENT')
         result = self.invoke()
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual(['first', 'second', 'second'], [call[1] for call in self.calls() if call[0] == 'build'])
+        self.assertEqual(['first', 'second', 'second'], (self.root / 'configured').read_text().splitlines())
         self.assertEqual(2, len(yaml.safe_load((self.root / 'config/env.yaml').read_text())))
+
+    def test_initial_environments_share_access_checks_and_service_reloads(self):
+        for name, php in [('first', '8.5'), ('second', '8.5'), ('third', '8.3'), ('fourth', '8.3')]:
+            self.project(name, 'exit 1\n', php=php)
+        result = self.invoke()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(1, len(self.calls()))
+        metrics = json.loads((self.root / 'metrics').read_text())
+        self.assertEqual(2, metrics['access_checks'])
+        self.assertEqual(1, metrics['apache_reloads'])
+        self.assertEqual(1, metrics['connector_checks'])
+        self.assertEqual([['supervisorctl', 'restart', 'php8.3-fpm'],
+                          ['supervisorctl', 'restart', 'php8.5-fpm']], metrics['php_restarts'])
+
+    def test_pending_domain_conflict_does_not_partially_register_entries(self):
+        for name in ('first', 'second'):
+            self.project(name)
+        entries = [{'arguments': ['--subdomain', 'duplicate', '--directory', name], 'subdomain': 'duplicate'}
+                   for name in ('first', 'second')]
+        pending = self.root / 'config/initial-environments.jsonl'
+        pending.write_text(''.join(json.dumps(entry) + '\n' for entry in entries))
+        before = pending.read_text()
+        result = self.invoke()
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('same domain', result.stderr)
+        self.assertEqual('[]\n', (self.root / 'config/env.yaml').read_text())
+        self.assertEqual(before, pending.read_text())
+        self.assertFalse((self.root / 'configured').exists())
+
+    def test_legacy_pending_queue_ignores_saved_build_requests(self):
+        self.project('legacy', 'exit 1\n')
+        entry = {'arguments': ['--git', 'git@example.test:owner/legacy.git', '--subdomain', 'legacy', '--directory', 'legacy'],
+                 'subdomain': 'legacy', 'build': True}
+        (self.root / 'config/initial-environments.jsonl').write_text(json.dumps(entry) + '\n')
+        result = self.invoke()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(['register-initial'], [call[0] for call in self.calls()])
+        self.assertFalse((self.root / 'config/initial-environments.jsonl').exists())
 
 
 class InitialSetupTest(unittest.TestCase):
@@ -213,7 +267,7 @@ done
                 self.assertEqual('private', entries[1]['visibility'])
                 self.assertNotIn('build', entries[1])
 
-    def test_start_runs_pending_generation_after_container_and_reconciliation(self):
+    def test_start_runs_pending_generation_after_container_without_duplicate_reconciliation(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for directory in ('.config', 'docker', 'bin'):
@@ -222,7 +276,7 @@ done
             (root / '.config/initial-environments').write_text('/var/www\n')
             (root / 'docker/docker-compose.override.yml').write_text('services: {}\n')
             (root / 'lamp').write_text((DOCKER.parent / 'lamp').read_text())
-            for command, body in [('docker', 'printf "%s\\n" "$*" >> "$TEST_CALLS"'), ('git', "printf '*\\n'")]:
+            for command, body in [('docker', 'printf "%s\\n" "$*" >> "$TEST_CALLS"'), ('git', "printf '*\\n'"), ('gh', 'exit 1')]:
                 executable = root / 'bin' / command
                 executable.write_text('#!/bin/bash\n' + body + '\n')
                 executable.chmod(0o755)
@@ -231,10 +285,15 @@ done
             self.assertEqual(0, result.returncode, result.stderr)
             calls = (root / 'calls').read_text().splitlines()
             startup = next(index for index, call in enumerate(calls) if ' up -d ' in call)
-            reconcile = next(index for index, call in enumerate(calls) if 'control.py reconcile' in call)
             generate = next(index for index, call in enumerate(calls) if 'initial-environments.sh' in call)
-            self.assertLess(startup, reconcile)
-            self.assertLess(reconcile, generate)
+            self.assertLess(startup, generate)
+            self.assertFalse(any('control.py reconcile' in call for call in calls))
+            (root / '.config/initial-environments').unlink()
+            (root / 'calls').write_text('')
+            result = subprocess.run(['bash', str(root / 'lamp'), 'start'], env=environment, capture_output=True, text=True, timeout=10)
+            self.assertEqual(0, result.returncode, result.stderr)
+            calls = (root / 'calls').read_text().splitlines()
+            self.assertEqual(1, sum('control.py reconcile' in call for call in calls))
 
 
 if __name__ == '__main__':

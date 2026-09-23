@@ -148,9 +148,10 @@ class DesiredFileTest(unittest.TestCase):
 
     def test_failed_entry_still_reloads_apache_once_at_the_end(self):
         (control.PROJECTS / 'fine').mkdir()
-        entries = [control.validate_specification({'subdomain': 'fine'}), control.validate_specification({'subdomain': 'broken', 'build': 'exit 1'})]
+        entries = [control.validate_specification({'subdomain': 'fine'}), control.validate_specification({'subdomain': 'broken'})]
         control.write_desired(entries, None)
-        with self.assertRaisesRegex(RuntimeError, 'bash failed'):
+        self.vhost.side_effect = [None, RuntimeError('vhost failed')]
+        with self.assertRaisesRegex(RuntimeError, 'vhost failed'):
             self.reconcile()
         self.assertEqual(1, self.reload_apache.call_count)
         self.assertEqual({'fine': 'ready', 'broken': 'failed'}, {item['subdomain']: item['status'] for item in control.environments()})

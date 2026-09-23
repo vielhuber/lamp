@@ -11,7 +11,7 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
         'docker-setup is run by the first start of a new installation: it asks for the domain, an optional private data repository and whether to add phpmyadmin, creates .config with setup.yaml and env.yaml, docker/docker-compose.override.yml with the projects mount and, without a data repository, .data with a commented settings.yaml and example files for syncdb and build scripts; with a data repository it tries host SSH access first and asks for a private key only if that fails; existing files are kept.' \
         'reset removes every dynamic environment with its checkout under _environments and its isolated databases; static environments stay. docker-reset is something else: it deletes all volumes.' \
         'presets writes the boilerplate .config/env.yaml and docker/docker-compose.override.yml when they are missing; init runs it.' \
-        'The final setup question can generate initial environments from existing Git checkouts (default /var/www); registered directories stay, new entries use main and private visibility, and matching shared build scripts run once after startup.' \
+        'The final setup question can generate initial environments from existing Git checkouts (default /var/www); registered directories stay, new entries use main and private visibility. Static environments only run build scripts on explicit lamp build requests, never during start/restart or initial registration.' \
         'cloudflare-setup creates or verifies the tunnel, the wildcard dns record, the Access application with its policies, the service token and the cache bypass rule with cloudflare.token from settings.yaml.' \
         'build <id|subdomain> reruns the configured build of an existing environment inside the running container; docker-build rebuilds the image without layer cache.' \
         'syncdb <profile> runs a .data/syncdb profile unchanged inside the container; its target must point at the container databases (localhost, root, database.password).' \
@@ -560,9 +560,10 @@ case "$command" in
         "${compose[@]}" up -d --no-build --wait --wait-timeout 240
         printf '🐳 container is healthy, applying .config/env.yaml\n'
         phase=environments
-        "${compose[@]}" exec -T app python3 /opt/lamp/control.py reconcile
         if [[ -f "$directory/.config/initial-environments" ]]; then
             "${compose[@]}" exec -T app bash /opt/lamp/initial-environments.sh
+        else
+            "${compose[@]}" exec -T app python3 /opt/lamp/control.py reconcile
         fi
         ;;
     stop) "${compose[@]}" stop ;;

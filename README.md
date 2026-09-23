@@ -46,7 +46,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - `./lamp start`
     - the first start asks for the domain and an optional private [data repository](#data-repository); it asks for an ssh key only if host SSH access fails, then creates tunnel, dns record, access application, service token, cache rule and certificate on its own
     - `Set up phpMyAdmin? [y/N]` adds its private environment to `env.yaml` only on confirmation; its build comes from the configured data folder
-    - the final question, `Generate initial environments from folder`, suggests `/var/www`: accept to register its Git checkouts and run their shared build scripts after startup, or clear the input to skip
+    - the final question, `Generate initial environments from folder`, suggests `/var/www`: accept to register its Git checkouts and hosts without running build scripts, or clear the input to skip
     - without a data repository it stops after writing the presets: set `cloudflare.token` and `cloudflare.email` in `.data/settings.yaml` and run `./lamp start` again
 
 </details>
@@ -293,7 +293,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - its final question optionally generates initial environments from a folder (default `/var/www`, immediate Git checkouts only); the folder must be mounted at the same path under `/var/www` in the container. Existing entries and checkouts stay; already registered directories are skipped. On an already configured installation, run `./lamp docker-setup` and then `start` or `restart` to use this step.
 - generation reads each checkout's `origin`, sets branch `main`, private visibility, PHP from `.phprc` or `8.5`, and its existing directory; it does not switch checkout branches. Subdomains use lowercase folder names with non-DNS characters replaced by hyphens, trimming leading/trailing hyphens; collisions fail. Webroot is the first existing `_public`, `public`, `new`, `html/br-kk`, or `.`.
 - database settings come from literal `syncdb <profile>` calls in the matching data build script (`engine` and `target.database`; SQLite uses the filename without extension). Without syncdb, `postgres` outside comments selects PostgreSQL with the normalized name; otherwise there is no database. Conflicting profiles fail. `nebro` gets VPN profile `nebro` only when enabled in settings. No build override, aliases or proxy settings are added.
-- generation is implemented in Bash and uses the container's configured data folder. Each newly registered project with a shared build script gets an explicit build. Pending work is kept in `.config/initial-environments` and `.config/initial-environments.jsonl` until completion, so a later start/restart resumes after a failure without repeating completed builds.
+- generation is implemented in Bash and uses the container's configured data folder. It registers all entries in one controller call and uses the existing reconciliation batch: two Access checks for the entire set, one connector check, one Apache reload and one PHP-FPM restart per used version. Build scripts are not executed. Pending registrations stay in `.config/initial-environments` and `.config/initial-environments.jsonl` until the batch succeeds; retries keep completed environments and apply only unfinished work. Build requests in older pending queues are ignored.
 - optional phpmyadmin: `https://github.com/phpmyadmin/phpmyadmin.git` on branch `STABLE` as subdomain `phpmyadmin`, private; uses `build/github.com-phpmyadmin-phpmyadmin.sh` from the configured data folder, without a build override
 
 | key             | default         | meaning                                                                                                       |
@@ -314,15 +314,15 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `build`         | omitted         | inline build; omitted uses `.data/build/<host>-<owner>-<repo>.sh` if present; `':'` for no-op                 |
 
 - project path: `/var/www/<directory or first subdomain>` for static environments, `/var/www/_environments/<id>` for dynamic ones; the same path on host and container
-- existing directories are adopted without clone, pull, checkout, chown or build; missing directories are cloned and built
+- existing directories are adopted without clone, pull, checkout, chown or build; missing static directories are cloned without building
 - `remove` deletes the project directory only for dynamic environments; static directories always stay
 - databases: a static environment gets exactly one fixed database `db_name` on `db_engine`, created when missing and never dropped or altered by lamp, reachable as `root` (mysql) or `postgres` (postgres) with the password from `/var/lib/lamp/secrets/database-password`; a `sqlite` database is the file `/var/lib/lamp/environments/<id>/data/<db_name>.sqlite`; dynamic environments get isolated `lamp_<id>` databases on mysql and postgresql with their own account, dropped on `remove`
 - mysql and postgresql are published on `127.0.0.1:3306` and `127.0.0.1:5432` of the host for database tools; the old host services must be stopped
 - the image ships one postgresql major version (currently 18) and refuses to start on data of another one; before pulling an image with a newer version, dump with `./lamp exec 'pg_dumpall -U postgres' > all.sql`, move `/var/lib/postgresql` aside inside the state volume, start, and restore with `./lamp exec 'psql -U postgres' < all.sql`
 - hostnames: `<subdomain-or-id>.<domain>`; every hostname must be unique; no nested subdomains
-- reconciliation: entries without a matching environment are provisioned, including database initialization, imports and the build; environments without a matching entry are removed; a changed build script reruns the build of every cloned environment using it; `[]` removes all static environments, an empty file is invalid; one pass does the access checks once at start and end, one apache reload and one php-fpm restart per version at the end
+- reconciliation: static entries are provisioned with hosts and configured databases, without running project build scripts or their imports; environments without a matching entry are removed. Changed scripts and previously failed builds do not trigger builds during start/restart. `[]` removes all static environments, an empty file is invalid; one pass does the access checks once at start and end, one apache reload and one php-fpm restart per version at the end
 - `lamp branch <id> <branch>` switches the checkout and updates the entry's `branch` in the file, so the environment keeps matching
-- failed environments keep status `failed` and are not served; fix the yaml and `restart`, or `build <id>`, or `remove`
+- failed environments keep status `failed` and are not served; `restart` reapplies static host configuration without retrying the build. Fix build errors and run `./lamp build <id|subdomain>` explicitly when wanted
 - `docker-reset` deletes the runtime state: static environments are re-registered from the file on the next `start`, dynamic environments are gone and their directories under `/var/www/_environments/` become orphans
 - `show`, `list` and `add` return json without passwords or build commands; `build <id>` and `syncdb <profile>` print their output live and end with one status line
 
@@ -334,7 +334,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 - `.data/build/<host>-<repository path with / replaced by ->.sh`, e.g. `github.com-owner-project.sh` for `git@github.com:owner/project.git` and `https://github.com/owner/project.git`
 - sourced by bash with `set -e` in the checkout, the selected php first on `PATH`, node lts, the variables below and a `syncdb` function
-- runs when lamp clones the project, when a cloned project's settings or script change, and on `./lamp build <id>`; adopted directories are only built by `./lamp build <id>`
+- static environments (including phpMyAdmin) only run scripts on `./lamp build <id|subdomain>`, never during start/restart, initial registration, settings changes or script changes. New dynamic environments still build automatically when lamp creates their checkout; adopted dynamic directories only build on explicit request
 - complete output goes to `/var/lib/lamp/environments/<id>/build.log` (mode 600); the path is printed at start and in the failure message; `./lamp build <id>` shows it live between `🔨 … building` and `✅ … built in <n>s`
 - no build runs without a script or `build` setting
 - `./lamp docker-setup` writes the example `.data/build/github.com-owner-project.sh`: syncdb import, `.env` created from an embedded heredoc with `APP_URL` and `DB_*` rewritten from the setup variables, then composer and npm; copy it per project and keep only the steps the project has
