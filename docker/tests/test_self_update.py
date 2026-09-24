@@ -63,7 +63,7 @@ else:
                               env={**self.environment, **environment}, capture_output=True, text=True, timeout=10)
 
     def test_updates_all_files_and_reexecutes_with_original_arguments_once(self):
-        candidate = re.sub(r'^DEPLOYMENT_SCRIPT_VERSION=\d+$', 'DEPLOYMENT_SCRIPT_VERSION=2', LAMP.read_text(), flags=re.M)
+        candidate = re.sub(r'^DEPLOYMENT_SCRIPT_VERSION=\d+$', lambda match: 'DEPLOYMENT_SCRIPT_VERSION=' + str(int(match[0].split('=')[1]) + 1), LAMP.read_text(), flags=re.M)
         candidate = candidate.replace('command=${1:-help}', 'printf "%s\\n" "$@" > "$TEST_ROOT/arguments"\ncommand=${1:-help}')
         (self.image / 'lamp').write_text(candidate)
         (self.image / 'docker/docker-compose.yml').write_text('updated compose\n')

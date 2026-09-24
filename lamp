@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOYMENT_SCRIPT_VERSION=2
+DEPLOYMENT_SCRIPT_VERSION=3
 directory=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 if [[ ! -e "$directory/.git" && "${LAMP_DEPLOYMENT_REFRESHED:-0}" != 1 && "${1:-}" != presets ]] \
     && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
@@ -62,7 +62,7 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
         'exec [<id|subdomain>] "<command>": with an id or subdomain inside that environment (project directory, its php, database variables, authenticated curl), without an id as root in the container.' \
         'audit: check /var/www inside the container for missing GitHub repositories, folders without Git, static LAMP environments, dependency/runtime versions and Git changes; clean repositories with remote changes are pulled with --ff-only.' \
         'code: run code . in the current directory inside the running container and open the host VS Code attached to it.' \
-        'ssh [<id|subdomain>]: interactive root shell in the current host directory when it exists in the container; with an environment it starts in the project directory with its variables and shows git status first.' \
+        'ssh [<id|subdomain>]: interactive root shell in the current host directory when it exists in the container; with an environment it starts in the project directory with its variables and shows git status first when .git exists.' \
         'branch <id|subdomain> <branch> [--base <branch>] [--operation switch|rename]' \
         'curl <id|subdomain> -- <curl arguments>; access <id|subdomain> (secret JSON for trusted integrations only)' \
         'Visibility defaults to private; public creates a hostname-specific Cloudflare Access bypass.' \
@@ -638,7 +638,7 @@ case "$command" in
         elif [[ "$#" = 1 ]]; then
             shown=$("${compose[@]}" exec -T app python3 /opt/lamp/control.py show "$1") || exit 1
             identity=$(printf '%s' "$shown" | python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])')
-            "${code_bridge[@]}" "${compose[@]}" exec -e LAMP_CODE_BRIDGE app bash -c "source /var/lib/lamp/environments/$identity/setup.env && cd \"\$LAMP_PROJECT_DIR\" && git status; exec bash -il"
+            "${code_bridge[@]}" "${compose[@]}" exec -e LAMP_CODE_BRIDGE app bash -c "source /var/lib/lamp/environments/$identity/setup.env && cd \"\$LAMP_PROJECT_DIR\" && [[ -e .git ]] && git status; exec bash -il"
         else
             "${code_bridge[@]}" "${compose[@]}" exec -e LAMP_CODE_BRIDGE app bash -c 'if [[ -d "$1" ]]; then cd -- "$1" || exit; fi; exec bash -il' bash "$PWD"
         fi

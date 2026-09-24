@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -129,6 +130,28 @@ elif 'exec' in sys.argv:
         self.assertEqual(['exec', '-T', '-e', 'LAMP_CODE_BRIDGE', 'app', 'bash', '-c',
                           'cd -- "$1" && code .', 'bash', str(self.folder)], arguments[arguments.index('exec'):])
         self.assertEqual([], list((self.root / '.config').glob('.code-*')))
+
+    def test_environment_shell_only_shows_status_when_git_marker_exists(self):
+        launcher = (BRIDGE.parents[2] / 'lamp').read_text()
+        line = next(line for line in launcher.splitlines() if 'setup.env && cd' in line)
+        command = shlex.split(line)[-1].replace('source /var/lib/lamp/environments/$identity/setup.env', 'true')
+        command = command.replace('\\$', '$')
+        command = command.replace('exec bash -il', "printf 'interactive shell opened\\n'")
+        for marker in ('missing', 'directory', 'file'):
+            with self.subTest(marker=marker):
+                project = self.root / marker
+                project.mkdir()
+                if marker != 'missing':
+                    arguments = ['git', 'init', '--quiet']
+                    if marker == 'file':
+                        arguments += ['--separate-git-dir', str(self.root / 'git-storage')]
+                    subprocess.run(arguments + [str(project)], check=True, capture_output=True)
+                result = subprocess.run(['bash', '-c', command], text=True, capture_output=True,
+                                        env={**os.environ, 'LAMP_PROJECT_DIR': str(project)}, timeout=5)
+                self.assertEqual(0, result.returncode)
+                self.assertEqual('', result.stderr)
+                self.assertIn('interactive shell opened', result.stdout)
+                self.assertEqual(marker != 'missing', 'On branch' in result.stdout)
 
 
 if __name__ == '__main__':
