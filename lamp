@@ -123,7 +123,6 @@ sync_data() {
     # a one-off container sees the mounts of the next start; build, syncdb and add need the running container anyway
     in_container=("${compose[@]}" run --rm --no-deps -T app)
     if [[ "$command" = build || "$command" = syncdb || "$command" = add ]]; then in_container=("${compose[@]}" exec -T app); fi
-    printf '📦 preparing data repository access: %s\n' "$data_repository"
     data_result=0
     "${in_container[@]}" bash -c 'set -euo pipefail
         if [[ ! -d /var/lib/lamp/data/.git ]]; then exit 3; fi

@@ -132,7 +132,7 @@ sync_data
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertEqual({'id': 'abcdef012345', 'status': 'ready'}, json.loads(result.stdout))
-                self.assertIn('preparing data repository access', result.stderr)
+                self.assertNotIn('preparing data repository access', result.stdout + result.stderr)
 
     def test_dns_failure_is_retried_before_updating_data(self):
         (self.root / 'data/.git').mkdir(parents=True)
