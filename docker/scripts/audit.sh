@@ -56,7 +56,7 @@ fi
 
 missing=0
 for d in */; do
-    [[ "$d" = .git/ ]] && continue
+    [[ "$d" = .git/ || "$d" = _environments/ ]] && continue
     if ! audit_git_repository "$d"; then
         [[ "$missing" -eq 0 ]] && printf '\n🔎 Folders without a Git repository\n\n'
         printf '⛔ %s [no git]\n' "${d%/}"
@@ -116,7 +116,7 @@ for d in ./*/; do
     b=0
     if git -C "$d" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
         fetch_result=0
-        timeout 10s git -C "$d" fetch --all --prune >/dev/null 2>&1 || fetch_result=$?
+        timeout 60s git -C "$d" fetch --all --prune >/dev/null 2>&1 || fetch_result=$?
         [[ "$fetch_result" -eq 124 ]] && fetch_timeout=1
         [[ "$fetch_result" -ne 0 && "$fetch_result" -ne 124 ]] && fetch_failed=1
         a=$(git -C "$d" rev-list --count --left-only HEAD...@{u})

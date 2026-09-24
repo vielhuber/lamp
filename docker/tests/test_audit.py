@@ -189,6 +189,15 @@ fi
 ''')
         self.assertIn('GitHub repository check failed', self.invoke())
 
+    def test_dynamic_environment_directory_is_not_a_missing_repository(self):
+        self.project('project')
+        (self.projects / '_environments' / 'dynamic-project').mkdir(parents=True)
+        output = self.invoke()
+        self.assertNotIn('_environments', output)
+        self.assertNotIn('Folders without a Git repository', output)
+        self.assertIn('Analyzing 1 projects...', output)
+        self.assertIn('1 projects are up to date.', output)
+
     def test_dirty_and_failed_fetch_repositories_are_never_pulled(self):
         self.project('project')
         for changes in (' M tracked', 'M  staged', '?? untracked'):
