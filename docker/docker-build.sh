@@ -620,7 +620,7 @@ curl -fsSL https://claude.ai/install.sh -o claude-install.sh
 bash claude-install.sh
 curl -fsSL https://opencode.ai/install -o opencode-install.sh
 bash opencode-install.sh
-curl -fsSL https://antigravity.google/cli/install.sh -o antigravity-install.sh
+curl --compressed -fsSL https://antigravity.google/cli/install.sh -o antigravity-install.sh
 bash antigravity-install.sh
 mkdir -p /root/.claude /root/.codex /root/.agents /root/.config/opencode /root/.antigravity
 ln -s /var/www/skills/AGENTS.md /root/.claude/CLAUDE.md
