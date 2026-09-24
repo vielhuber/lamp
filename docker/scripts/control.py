@@ -99,9 +99,13 @@ def identity_argument(value):
 def configuration():
     # setup.yaml belongs to this host, settings.yaml to the data folder that several hosts may share.
     setup = yaml.safe_load((SETUP / "setup.yaml").read_text())
-    if (not isinstance(setup, dict) or "domain" not in setup or set(setup) - {"domain", "data"}
-            or (setup.get("data") is not None and not isinstance(setup["data"], str))):
-        raise ValueError("setup.yaml must contain domain and optionally data; see README.md.")
+    if (not isinstance(setup, dict) or "domain" not in setup or set(setup) - {"domain", "data", "mounts"}
+            or (setup.get("data") is not None and not isinstance(setup["data"], str))
+            or (setup.get("mounts") is not None
+                and (not isinstance(setup["mounts"], list)
+                     or any(not isinstance(mount, str) or not re.fullmatch(r"/[^:\n]*:/[^:\n]*(?::ro)?", mount)
+                            for mount in setup["mounts"])))):
+        raise ValueError("setup.yaml must contain domain and optionally data and mounts (/host/path:/container/path[:ro]); see README.md.")
     path = CONFIGURATION / "settings.yaml"
     value = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
     sections = {"git": ("name", "email", "commit_key", "commit_url", "commit_model", "commit_effort"), "apache": ("admin",),

@@ -55,7 +55,12 @@ class SettingsTest(unittest.TestCase):
     def test_setup_holds_the_domain_and_the_data_repository(self):
         (self.root / 'setup.yaml').write_text('domain: example.test\ndata: git@example.test:owner/lamp-data.git\n')
         self.assertEqual({'domain': 'example.test'}, control.configuration())
-        for text in ['data: git@example.test:owner/lamp-data.git', 'domain: example.test\nother: 1', 'domain: example.test\ndata: [x]', 'domain: Example.Test']:
+        (self.root / 'setup.yaml').write_text('domain: example.test\nmounts:\n    - /var/www:/var/www\n'
+                                              '    - /mnt/c/Photo Collection:/mnt/c/Photo Collection:ro\n')
+        self.assertEqual({'domain': 'example.test'}, control.configuration())
+        for text in ['data: git@example.test:owner/lamp-data.git', 'domain: example.test\nother: 1', 'domain: example.test\ndata: [x]', 'domain: Example.Test',
+                     'domain: example.test\nmounts: /var/www:/var/www', 'domain: example.test\nmounts: [var/www:/var/www]',
+                     'domain: example.test\nmounts: [/var/www]', 'domain: example.test\nmounts: ["/var/www:/var/www:rw"]']:
             with self.subTest(text=text), self.assertRaises(ValueError):
                 (self.root / 'setup.yaml').write_text(text + '\n')
                 control.configuration()

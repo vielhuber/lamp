@@ -220,8 +220,9 @@ class InitialSetupTest(unittest.TestCase):
             executable = root / 'lamp'
             executable.write_text((DOCKER.parent / 'lamp').read_text())
             result = subprocess.run(['script', '-qec', 'bash ' + shlex.quote(str(executable)) + ' docker-setup', '/dev/null'],
-                                    input='example.test\n\nn\n\n', text=True, capture_output=True, timeout=10)
+                                    input='example.test\n\n\n\nn\n\n', text=True, capture_output=True, timeout=10)
             self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(['/var/www:/var/www'], yaml.safe_load((root / '.config/setup.yaml').read_text())['mounts'])
             self.assertIn('Generate initial environments from folder', result.stdout)
             self.assertLess(result.stdout.index('Private git repository'), result.stdout.index('Generate initial environments'))
             self.assertEqual('/var/www\n', (root / '.config/initial-environments').read_text())
@@ -252,7 +253,7 @@ done
 ''')
             docker.chmod(0o755)
             environment = {**os.environ, 'PATH': str(root / 'bin') + ':' + os.environ['PATH'], 'TEST_CONFIG': str(root / '.config')}
-            for command, answers in [('start', 'example.test\n\ny\n\n'), ('docker-setup', 'y\n')]:
+            for command, answers in [('start', 'example.test\n\n\n\ny\n\n'), ('docker-setup', 'y\n')]:
                 result = subprocess.run(['script', '-qec', 'bash ' + shlex.quote(str(executable)) + ' ' + command, '/dev/null'],
                                         input=answers, env=environment, text=True, capture_output=True, timeout=10)
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)

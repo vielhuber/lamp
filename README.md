@@ -216,10 +216,10 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 | path                                 | contents                                                                          | survives `docker-reset` |
 | ------------------------------------ | --------------------------------------------------------------------------------- | ----------------------- |
-| `.config/setup.yaml`                 | host-specific: `domain`, optional `data` repository (mode 600)                    | yes                     |
+| `.config/setup.yaml`                 | host-specific: `domain`, optional `data` repository and `mounts` (mode 600)       | yes                     |
 | `.config/env.yaml`                   | host-specific: desired environments (mode 600)                                    | yes                     |
 | `.data/settings.yaml`                | optional `git`, `apache`, `postfix`, `cloudflare`, `php`, `vpn`, … (mode 600)     | yes                     |
-| `docker/docker-compose.override.yml` | host-specific: projects mount, extra mounts and ports (gitignored)                | yes                     |
+| `docker/docker-compose.override.yml` | host-specific mounts and ports; generated from `mounts` in `setup.yaml` (gitignored) | yes                  |
 | `.data/build/*.sh`                   | shared repository build scripts (mode 600)                                        | yes                     |
 | `.data/syncdb/*.json`                | original syncdb profiles (mode 600)                                               | yes                     |
 | `.data/ssh/`                         | container `/root/.ssh` (keys, config, known_hosts)                                | yes                     |
@@ -241,12 +241,13 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>configuration</summary>
 
-- `./lamp docker-setup` writes `.config/setup.yaml` (mode 600) with the answers for `domain` and `data`, and `.data/settings.yaml` (mode 600) with every optional section as a commented example
+- `./lamp docker-setup` writes `.config/setup.yaml` (mode 600) with the answers for `domain`, `data` and `mounts` (first the projects directory, default `/var/www:/var/www`, then further mounts until an empty answer), and `.data/settings.yaml` (mode 600) with every optional section as a commented example
 
 | key in `setup.yaml` | default  | effect                                                                                       |
 | ------------------- | -------- | -------------------------------------------------------------------------------------------- |
 | `domain`            | required | base domain of every environment; a change reapplies all environments on `start` / `restart` |
 | `data`              | unset    | ssh url of the private [data repository](#data-repository) that replaces `.data`             |
+| `mounts`            | unset    | list of bind mounts in docker short syntax `/host/path:/container/path[:ro]`; `start` / `restart` regenerate `docker/docker-compose.override.yml` from it, a change recreates the container. Keep `/var/www:/var/www` first, since environments report container paths. Without `mounts` the override file stays as it is |
 
 | key in `settings.yaml`                                                              | default                             | effect                                                                                                                                                                              |
 | ----------------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

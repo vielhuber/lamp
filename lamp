@@ -49,9 +49,9 @@ json=false
 if [[ "$command" = status || "$command" = version ]] && [[ "${1:-}" = --json ]]; then json=true; shift; fi
 if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
     printf '%s\n' 'Usage: lamp start|add|stop|restart|status [--json]|version [--json]|build [<id|subdomain>]|syncdb <profile>|list [--search <term>]|show <id|subdomain>|branch|exec [<id|subdomain>] "<command>"|curl|access <id|subdomain>|remove <id|subdomain>|reset|audit|code|ssh [<id|subdomain>]|cloudflare-setup|docker-build|docker-setup|presets|docker-reset' \
-        'docker-setup is run by the first start of a new installation: it asks for the domain, an optional private data repository and whether to add phpmyadmin, creates .config with setup.yaml and env.yaml, docker/docker-compose.override.yml with the projects mount and, without a data repository, .data with a commented settings.yaml and example files for syncdb and build scripts; with a data repository it tries host SSH access first and asks for a private key only if that fails; existing files are kept.' \
+        'docker-setup is run by the first start of a new installation: it asks for the domain, an optional private data repository, the mounts (starting with the projects directory /var/www:/var/www) and whether to add phpmyadmin, creates .config with setup.yaml and env.yaml, docker/docker-compose.override.yml with the projects mount and, without a data repository, .data with a commented settings.yaml and example files for syncdb and build scripts; with a data repository it tries host SSH access first and asks for a private key only if that fails; existing files are kept.' \
         'reset removes every dynamic environment with its checkout under _environments and its isolated databases; static environments stay. docker-reset is something else: it deletes all volumes.' \
-        'presets writes the boilerplate .config/env.yaml and docker/docker-compose.override.yml when they are missing; init runs it.' \
+        'presets writes the boilerplate .config/env.yaml and docker/docker-compose.override.yml when they are missing; init runs it. With mounts in .config/setup.yaml, start and restart regenerate docker/docker-compose.override.yml from them.' \
         'The final setup question can generate initial environments from existing Git checkouts (default /var/www); registered directories stay, new entries use main and private visibility. Static environments only run build scripts on explicit lamp build requests, never during start/restart or initial registration.' \
         'cloudflare-setup creates or verifies the tunnel, the wildcard dns record, the Access application with its policies, the service token and the cache bypass rule with cloudflare.token from settings.yaml.' \
         'build [<id|subdomain>] reruns the configured build inside the running container; without an argument it selects the environment containing the current directory; docker-build rebuilds the image without layer cache.' \
@@ -99,6 +99,31 @@ configured_data_repository() {
     value=$(sed -n 's/^data:[[:space:]]*//p' "$directory/.config/setup.yaml" | sed "s/[[:space:]]*\(#.*\)\?$//; s/^[\"']//; s/[\"']$//")
     if [[ "$value" = null || "$value" = '~' ]]; then value=; fi
     printf '%s' "$value"
+}
+# mounts in setup.yaml use the docker short syntax: - /host/path:/container/path[:ro]
+configured_mounts() {
+    sed -n '/^mounts:[[:space:]]*$/,/^[^[:space:]#-]/s/^[[:space:]]*-[[:space:]]*//p' "$directory/.config/setup.yaml" \
+        | sed "s/[[:space:]]*\(#.*\)\?$//; s/^[\"']//; s/[\"']$//"
+}
+# the compose override is generated from the mounts; without mounts it stays as it is
+write_mount_override() {
+    local mount source target override
+    local -a mounts
+    mapfile -t mounts < <(configured_mounts)
+    if (( ${#mounts[@]} == 0 )); then return; fi
+    override=$'# generated from the mounts in .config/setup.yaml on every start and restart; change them there\nservices:\n    app:\n        volumes:'
+    for mount in "${mounts[@]}"; do
+        if [[ ! "$mount" =~ ^(/[^:]*):(/[^:]*)(:ro)?$ ]]; then
+            printf '❌ Invalid mount in .config/setup.yaml: %s (expected /host/path:/container/path or /host/path:/container/path:ro)\n' "$mount" >&2
+            exit 2
+        fi
+        source=${BASH_REMATCH[1]//\'/\'\'}
+        target=${BASH_REMATCH[2]//\'/\'\'}
+        override+=$'\n            - type: bind\n              source: '"'$source'"$'\n              target: '"'$target'"
+        if [[ -n "${BASH_REMATCH[3]}" ]]; then override+=$'\n              read_only: true'; fi
+        override+=$'\n              bind:\n                  create_host_path: false'
+    done
+    printf '%s\n' "$override" > "$directory/docker/docker-compose.override.yml"
 }
 # with a data repository /etc/lamp is a clone inside the container (state volume), mirrored from the repository afterwards
 read_data_key() {
@@ -237,6 +262,7 @@ docker_setup() {
     config="$directory/.config"
     domain=example.com
     data_repository=
+    mounts=()
     # a new installation is asked for its domain and its data repository; without a terminal the presets stay as they are
     if [[ -e "$config/setup.yaml" ]]; then
         data_repository=$(configured_data_repository)
@@ -247,10 +273,25 @@ docker_setup() {
             printf '%s\n' '❌ The data repository must be an ssh url like git@github.com:<owner>/lamp-data.git.' >&2
             exit 2
         fi
+        # the projects directory comes first; environments report container paths, so keep it at the same path
+        read -r -p 'Projects mount into the container (/host/path:/container/path[:ro]) [/var/www:/var/www]: ' mount < /dev/tty
+        mount=${mount:-/var/www:/var/www}
+        while [[ -n "$mount" ]]; do
+            if [[ ! "$mount" =~ ^/[^:]*:/[^:]*(:ro)?$ ]]; then
+                printf '%s\n' '❌ A mount must look like /host/path:/container/path or /host/path:/container/path:ro.' >&2
+                exit 2
+            fi
+            mounts+=("$mount")
+            read -r -p 'Further mount (/host/path:/container/path[:ro], empty to finish): ' mount < /dev/tty
+        done
     fi
     write_presets
     setup="domain: ${domain:-example.com}"
     if [[ -n "$data_repository" ]]; then setup+=$'\n\n'"data: $data_repository"; fi
+    if (( ${#mounts[@]} > 0 )); then
+        setup+=$'\n\nmounts:'
+        for mount in "${mounts[@]}"; do setup+=$'\n    - '"$mount"; done
+    fi
     preset "$config/setup.yaml" 600 <<< "$setup"
     # with a data repository .data is a clone, so no presets are written into it
     if [[ -z "$data_repository" ]]; then
@@ -485,6 +526,7 @@ export LAMP_CONFIG_DIR="$directory/.config"
 # interactive calls get a terminal inside the container (progress bars); piped calls stay plain
 tty=(-T)
 if [[ -t 0 && -t 1 ]]; then tty=(); fi
+if [[ ( "$command" = start || "$command" = restart ) && -f "$directory/.config/setup.yaml" ]]; then write_mount_override; fi
 if [[ -f "$directory/docker/docker-compose.override.yml" ]]; then
     compose+=(-f "$directory/docker/docker-compose.override.yml")
 fi
