@@ -370,6 +370,8 @@ step 'local environment permissions'
 # Preserve the development-only root FPM pools, but never recursively chmod host projects.
 for version in "${php_versions[@]}"; do
     sed -i 's/^user = .*/user = root/; s/^group = .*/group = root/' "/etc/php/$version/fpm/pool.d/www.conf"
+    # clear_env leaves php without PATH, so proc_open would not find tools like node in /usr/local/bin
+    printf '\nenv[PATH] = /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n' >> "/etc/php/$version/fpm/pool.d/www.conf"
 done
 
 #### fix font errors
@@ -741,6 +743,7 @@ step 'image checks'
 for version in "${php_versions[@]}"; do
     "/usr/bin/php$version" -v
     "/usr/sbin/php-fpm$version" -R -t
+    grep -q '^env\[PATH\] = ' "/etc/php/$version/fpm/pool.d/www.conf"
 done
 mysqld --validate-config
 dpkg --audit
