@@ -99,13 +99,18 @@ def identity_argument(value):
 def configuration():
     # setup.yaml belongs to this host, settings.yaml to the data folder that several hosts may share.
     setup = yaml.safe_load((SETUP / "setup.yaml").read_text())
-    if (not isinstance(setup, dict) or "domain" not in setup or set(setup) - {"domain", "data", "mounts"}
+    if (not isinstance(setup, dict) or "domain" not in setup or set(setup) - {"domain", "data", "mounts", "ignore_from_audit"}
             or (setup.get("data") is not None and not isinstance(setup["data"], str))
             or (setup.get("mounts") is not None
                 and (not isinstance(setup["mounts"], list)
                      or any(not isinstance(mount, str) or not re.fullmatch(r"/[^:\n]*:/[^:\n]*(?::ro)?", mount)
-                            for mount in setup["mounts"])))):
-        raise ValueError("setup.yaml must contain domain and optionally data and mounts (/host/path:/container/path[:ro]); see README.md.")
+                            for mount in setup["mounts"])))
+            or (setup.get("ignore_from_audit") is not None
+                and (not isinstance(setup["ignore_from_audit"], list)
+                     or any(not isinstance(folder, str) or not re.fullmatch(r"[^/\n]+", folder) or folder in (".", "..")
+                            for folder in setup["ignore_from_audit"])))):
+        raise ValueError("setup.yaml must contain domain and optionally data, mounts (/host/path:/container/path[:ro]) "
+                         "and ignore_from_audit (folder names in /var/www); see README.md.")
     path = CONFIGURATION / "settings.yaml"
     value = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
     sections = {"git": ("name", "email", "commit_key", "commit_url", "commit_model", "commit_effort"), "apache": ("admin",),
@@ -1175,7 +1180,7 @@ def environment_lock(identity):
         yield
 
 
-def add(arguments, settings, identity, current=None, *, force_build=False, reason="creating", batch=None):
+def add(arguments, settings, identity, current=None, *, force_build=False, reason="creating", batch=None, build_arguments=()):
     # batch collects deferred work of a reconcile run: one apache reload and one php-fpm restart per version at the end,
     # access checks and the connector are handled once by the caller.
     desired = validate_specification({key: getattr(arguments, key) for key in ("git", *ENVIRONMENT_DEFAULTS)})
@@ -1312,8 +1317,10 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
                         # the complete output goes to the log and to the terminal at the same time.
                         master, slave = pty.openpty()
                         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 160, 0, 0))
-                        # set -x after setup.env: every build command is echoed, the variable exports are not
-                        process = subprocess.Popen(["bash", "-c", "set -e\nsource " + shlex.quote(environment["setup_environment"]) + "\nset -x\n" + build],
+                        # set -x after setup.env: every build command is echoed, the variable exports are not;
+                        # arguments of lamp build become "$@" of the build and of a sourced build script
+                        process = subprocess.Popen(["bash", "-c", "set -e\nsource " + shlex.quote(environment["setup_environment"])
+                                                    + "\nset -- " + shlex.join(build_arguments) + "\nset -x\n" + build],
                                                    cwd=project, env={**os.environ, "TERM": "xterm-256color", **variables},
                                                    stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, close_fds=True)
                         os.close(slave)
@@ -1455,7 +1462,12 @@ def main():
     create.add_argument("--proxy-port", type=int)
     create.add_argument("--proxy-exclude")
     create.add_argument("--visibility", choices=("private", "public"))
-    arguments = parser.parse_args()
+    command_line = sys.argv[1:]
+    build_arguments = []
+    if command_line[:1] == ["build"] and "--" in command_line:
+        separator = command_line.index("--")
+        command_line, build_arguments = command_line[:separator], command_line[separator + 1:]
+    arguments = parser.parse_args(command_line)
     if not Path("/.dockerenv").exists():
         raise ValueError("Run the controller through lamp on the Docker host.")
     os.umask(0o077)
@@ -1728,7 +1740,8 @@ def main():
                 raise ValueError("Environment has no build; add a repository script in .data/build or a build setting.")
             # the build reports itself in one line; lamp show <id> prints the details
             with environment_lock(identity):
-                add(argparse.Namespace(**desired[identity]), settings, identity, load_environment(identity), force_build=True, reason="build requested")
+                add(argparse.Namespace(**desired[identity]), settings, identity, load_environment(identity), force_build=True, reason="build requested",
+                    build_arguments=build_arguments)
             return
         else:
             identity = validate_identity(arguments.id)

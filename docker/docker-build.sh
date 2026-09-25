@@ -371,7 +371,7 @@ step 'local environment permissions'
 for version in "${php_versions[@]}"; do
     sed -i 's/^user = .*/user = root/; s/^group = .*/group = root/' "/etc/php/$version/fpm/pool.d/www.conf"
     # clear_env leaves php without PATH, so proc_open would not find tools like node in /usr/local/bin
-    printf '\nenv[PATH] = /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n' >> "/etc/php/$version/fpm/pool.d/www.conf"
+    printf '\nenv[PATH] = /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nenv[PUPPETEER_EXECUTABLE_PATH] = /usr/bin/google-chrome\n' >> "/etc/php/$version/fpm/pool.d/www.conf"
 done
 
 #### fix font errors

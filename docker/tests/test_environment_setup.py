@@ -129,6 +129,14 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertEqual('ready', control.load_environment(self.identity)['status'])
         self.assertEqual('built', (project / 'build-result.txt').read_text())
 
+    def test_build_arguments_reach_the_build_as_positional_parameters(self):
+        project = control.PROJECTS / 'manual'
+        self.invoke('add', '--id', self.identity, '--subdomain', 'manual', '--build', 'printf "%s|" "$#" "$@" > build-result.txt')
+        self.invoke('build', 'manual', '--', '--db-clone', 'first second', '--build')
+        self.assertEqual('3|--db-clone|first second|--build|', (project / 'build-result.txt').read_text())
+        self.invoke('build', '--directory', str(project))
+        self.assertEqual('0|', (project / 'build-result.txt').read_text())
+
     def test_shared_script_changes_do_not_rebuild_or_reconfigure_static_environments(self):
         remote = 'git@example.test:owner/project.git'
         script = control.build_script(remote)

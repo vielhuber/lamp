@@ -65,7 +65,7 @@ class InitialEnvironmentsTest(unittest.TestCase):
         (self.root / 'hosts').write_text('127.0.0.1 localhost\n')
         (self.root / 'config/setup.yaml').write_text('domain: example.test\n')
         (self.root / 'config/env.yaml').write_text('[]\n')
-        (self.root / 'data/settings.yaml').write_text('vpn:\n  enabled: true\n  tunnels:\n    - name: nebro\n')
+        (self.root / 'data/settings.yaml').write_text('vpn:\n  enabled: true\n  tunnels:\n    - name: office\n')
         (self.root / 'config/initial-environments').write_text(str(self.root / 'projects') + '\n')
         self.runner = self.root / 'controller.py'
         self.runner.write_text(RUNNER)
@@ -99,10 +99,10 @@ class InitialEnvironmentsTest(unittest.TestCase):
         return [json.loads(line) for line in file.read_text().splitlines()] if file.exists() else []
 
     def test_rules_preserve_checkouts_and_existing_environments_without_repeated_builds(self):
-        self.project('My.Repo', 'db_engine postgres\nsyncdb "production"\n', ('_public', 'public', 'new', 'html/br-kk'), '8.3')
-        self.project('nebro', 'echo build\n', ('public', 'new'))
-        self.project('sqlite', "syncdb 'sqlite-production';\n", ('new', 'html/br-kk'))
-        self.project('postgres', 'db_engine postgres\n', ('html/br-kk',))
+        self.project('My.Repo', 'db_engine postgres\nsyncdb "production"\n', ('_public', 'public', 'new'), '8.3')
+        self.project('office', 'echo build\n', ('public', 'new'))
+        self.project('sqlite', "syncdb 'sqlite-production';\n", ('new',))
+        self.project('postgres', 'db_engine postgres\n')
         self.project('plain', '# postgres is only a comment\necho build\n')
         self.project('no-build')
         self.project('existing')
@@ -118,7 +118,7 @@ class InitialEnvironmentsTest(unittest.TestCase):
         self.assertEqual(7, len(entries))
         self.assertEqual('custom', entries['existing']['subdomain'])
         self.assertEqual('8.2', entries['existing']['php'])
-        expected_roots = {'My.Repo': '_public', 'nebro': 'public', 'sqlite': 'new', 'postgres': 'html/br-kk'}
+        expected_roots = {'My.Repo': '_public', 'office': 'public', 'sqlite': 'new'}
         for name, entry in entries.items():
             self.assertEqual('keep', (self.root / 'projects' / name / 'local-work').read_text())
             if name == 'existing':
@@ -127,7 +127,7 @@ class InitialEnvironmentsTest(unittest.TestCase):
             self.assertEqual('private', entry['visibility'])
             self.assertEqual('8.3' if name == 'My.Repo' else '8.5', entry['php'])
             self.assertEqual(expected_roots.get(name, '.'), entry['webroot'])
-            self.assertEqual('nebro' if name == 'nebro' else None, entry['vpn'])
+            self.assertEqual('office' if name == 'office' else None, entry['vpn'])
             for flag in ('build', 'aliases', 'proxy_port', 'proxy_exclude'):
                 self.assertIsNone(entry.get(flag))
         self.assertEqual('my-repo', entries['My.Repo']['subdomain'])
@@ -220,9 +220,13 @@ class InitialSetupTest(unittest.TestCase):
             executable = root / 'lamp'
             executable.write_text((DOCKER.parent / 'lamp').read_text())
             result = subprocess.run(['script', '-qec', 'bash ' + shlex.quote(str(executable)) + ' docker-setup', '/dev/null'],
-                                    input='example.test\n\n\n\nn\n\n', text=True, capture_output=True, timeout=10)
+                                    input='example.test\n\n\n\nuploads\nmirror\n\nn\n\n', text=True, capture_output=True, timeout=10,
+                                    env={**os.environ, 'LAMP_DEPLOYMENT_REFRESHED': '1'})
             self.assertEqual(0, result.returncode, result.stderr)
-            self.assertEqual(['/var/www:/var/www'], yaml.safe_load((root / '.config/setup.yaml').read_text())['mounts'])
+            setup = yaml.safe_load((root / '.config/setup.yaml').read_text())
+            self.assertEqual(['/var/www:/var/www'], setup['mounts'])
+            self.assertEqual(['uploads', 'mirror'], setup['ignore_from_audit'])
+            self.assertLess(result.stdout.index('Projects mount'), result.stdout.index('lamp audit skips'))
             self.assertIn('Generate initial environments from folder', result.stdout)
             self.assertLess(result.stdout.index('Private git repository'), result.stdout.index('Generate initial environments'))
             self.assertEqual('/var/www\n', (root / '.config/initial-environments').read_text())
@@ -253,7 +257,7 @@ done
 ''')
             docker.chmod(0o755)
             environment = {**os.environ, 'PATH': str(root / 'bin') + ':' + os.environ['PATH'], 'TEST_CONFIG': str(root / '.config')}
-            for command, answers in [('start', 'example.test\n\n\n\ny\n\n'), ('docker-setup', 'y\n')]:
+            for command, answers in [('start', 'example.test\n\n\n\n\ny\n\n'), ('docker-setup', 'y\n')]:
                 result = subprocess.run(['script', '-qec', 'bash ' + shlex.quote(str(executable)) + ' ' + command, '/dev/null'],
                                         input=answers, env=environment, text=True, capture_output=True, timeout=10)
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)

@@ -18,9 +18,12 @@ class AuditTest(unittest.TestCase):
         self.projects.mkdir()
         self.config = self.root / 'env.yaml'
         self.config.write_text('[]\n')
+        self.setup = self.root / 'setup.yaml'
+        self.setup.write_text('domain: example.test\n')
         (self.root / 'bin').mkdir()
         source = (ROOT / 'docker/scripts/audit.sh').read_text()
         self.script = source.replace('/var/www', str(self.projects)).replace('/etc/lamp-config/env.yaml', str(self.config))
+        self.script = self.script.replace('/etc/lamp-config/setup.yaml', str(self.setup))
         self.environment = {**os.environ, 'PATH': str(self.root / 'bin') + ':' + os.environ['PATH'],
                             'TEST_ROOT': str(self.root), 'TEST_REPOSITORIES': '', 'TEST_ORGANIZATIONS': '',
                             'TEST_ORGANIZATION_REPOSITORIES': '', 'TEST_DIRTY': '',
@@ -94,6 +97,24 @@ esac
         self.assertIn('Analyzing 2 projects', output)
         self.assertRegex(output, r'\.hidden\s+\[lamp missing\]')
         self.assertIn('1 projects are up to date.', output)
+
+    def test_ignored_folders_skip_every_check_but_still_count_as_cloned(self):
+        (self.project('mirror', registered=False) / '.origin').write_text('git@github.com:vielhuber/mirror.git')
+        (self.projects / 'uploads').mkdir()
+        self.project('checked')
+        self.setup.write_text('domain: example.test\nignore_from_audit:\n    - mirror\n    - uploads\n')
+        output = self.invoke(TEST_REPOSITORIES='mirror git@github.com:vielhuber/mirror.git', TEST_DIRTY=' M file')
+        self.assertNotIn('mirror', output)
+        self.assertNotIn('uploads', output)
+        self.assertIn('Analyzing 1 projects', output)
+        self.assertRegex(output, r'checked\s+\[modified\]')
+        calls = (self.root / 'git-calls').read_text()
+        self.assertIn('checked status', calls)
+        self.assertNotIn('mirror status', calls)
+
+    def test_unreadable_setup_is_reported(self):
+        self.setup.write_text('domain: [\n')
+        self.assertIn('⚠️ ignore_from_audit in setup.yaml could not be read.', self.invoke())
 
     def test_clean_behind_repository_is_pulled_before_dependency_checks(self):
         project = self.project('clean')

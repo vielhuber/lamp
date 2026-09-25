@@ -18,7 +18,7 @@ trap 'rm -f -- "$temporary"' EXIT
 
 if [[ ! -e "$pending" ]]; then
     existing=$(yq -c '.' "$config/env.yaml")
-    if ! nebro_vpn=$(yq -r '(.vpn.enabled == true) and any(.vpn.tunnels[]?; .name == "nebro")' "$data/settings.yaml" 2>/dev/null); then
+    if ! vpn_tunnels=$(yq -r 'select(.vpn.enabled == true) | .vpn.tunnels[]?.name' "$data/settings.yaml" 2>/dev/null); then
         echo '❌ Invalid settings.yaml.' >&2
         exit 1
     fi
@@ -51,7 +51,7 @@ if [[ ! -e "$pending" ]]; then
         build="$data/build/${host,,}-${repository//\//-}.sh"
         php=8.5
         if [[ -f "$project/.phprc" ]]; then php=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$project/.phprc"); fi
-        for webroot in _public public new html/br-kk .; do
+        for webroot in _public public new .; do
             [[ -d "$project/$webroot" ]] && break
         done
         engine= database= postgres=false
@@ -85,7 +85,7 @@ if [[ ! -e "$pending" ]]; then
         fi
         if [[ -z "$engine" && "$postgres" = true ]]; then engine=postgres database=$subdomain; fi
         arguments=(--git "$remote" --branch main --php "$php" --subdomain "$subdomain" --directory "$directory" --webroot "$webroot" --visibility private)
-        if [[ "$name" = nebro && "$nebro_vpn" = true ]]; then arguments+=(--vpn nebro); fi
+        if grep -Fxq -- "$name" <<< "$vpn_tunnels"; then arguments+=(--vpn "$name"); fi
         if [[ -n "$engine" ]]; then arguments+=(--db-name "$database" --db-engine "$engine"); fi
         jq -cn --arg subdomain "$subdomain" \
             '$ARGS.positional | {arguments: ., subdomain: $subdomain}' --args -- "${arguments[@]}" >> "$temporary"

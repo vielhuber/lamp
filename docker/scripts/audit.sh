@@ -29,6 +29,15 @@ audit_own_repository() {
     return 0
 }
 
+declare -A ignored=()
+if ignored_folders=$(yq -r '.ignore_from_audit // [] | .[]' /etc/lamp-config/setup.yaml); then
+    while IFS= read -r folder; do
+        [[ -n "$folder" ]] && ignored["$folder"]=1
+    done <<< "$ignored_folders"
+else
+    printf '⚠️ ignore_from_audit in setup.yaml could not be read.\n'
+fi
+
 if organizations=$(gh org list --limit 10000) && repositories=$(while IFS= read -r owner; do
     [[ -n "$owner" ]] || continue
     gh repo list "$owner" --no-archived --limit 10000 --json name,sshUrl --jq '.[] | "\(.name) \(.sshUrl)"' || exit 1
@@ -56,7 +65,7 @@ fi
 
 missing=0
 for d in */; do
-    [[ "$d" = .git/ || "$d" = _environments/ ]] && continue
+    [[ "$d" = .git/ || "$d" = _environments/ || -v ignored["${d%/}"] ]] && continue
     if ! audit_git_repository "$d"; then
         [[ "$missing" -eq 0 ]] && printf '\n🔎 Folders without a Git repository\n\n'
         printf '⛔ %s [no git]\n' "${d%/}"
@@ -81,7 +90,7 @@ projects=0
 up_to_date=0
 for d in ./*/; do
     n=$(basename "$d")
-    [[ "$n" = _archive ]] && continue
+    [[ "$n" = _archive || -v ignored["$n"] ]] && continue
     audit_own_repository "$d" || continue
     projects=$((projects+1))
     [[ ${#n} -gt $max ]] && max=${#n}
@@ -90,7 +99,7 @@ printf 'Analyzing %d projects...\n\n' "$projects"
 
 for d in ./*/; do
     n=$(basename "$d")
-    [[ "$n" = _archive ]] && continue
+    [[ "$n" = _archive || -v ignored["$n"] ]] && continue
     audit_own_repository "$d" || continue
     lamp_ok=0
     if [[ "$lamp_read" -eq 0 ]]; then
