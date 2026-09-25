@@ -241,6 +241,18 @@ def environments():
     return [load_environment(path.parent.name) for path in sorted((STATE / "environments").glob("*/environment.json"))]
 
 
+def environment_by_directory(directory):
+    directory = directory.resolve()
+    matches = [item for item in environments() if directory.is_relative_to(Path(item["path"]).resolve())]
+    if not matches:
+        return None
+    depth = max(len(Path(item["path"]).resolve().parts) for item in matches)
+    matches = [item for item in matches if len(Path(item["path"]).resolve().parts) == depth]
+    if len(matches) != 1:
+        raise ValueError(f"Multiple environments match directory {directory}; specify an id or subdomain.")
+    return matches[0]
+
+
 def save_environment(environment):
     write_json(STATE / "environments" / environment["id"] / "environment.json", environment)
 
@@ -1433,7 +1445,9 @@ def main():
     build.add_argument("id", nargs="?", type=identity_argument)
     build.add_argument("--directory", type=Path)
     execute = commands.add_parser("exec")
-    execute.add_argument("id", type=identity_argument)
+    target = execute.add_mutually_exclusive_group(required=True)
+    target.add_argument("id", nargs="?", type=identity_argument)
+    target.add_argument("--directory", type=Path)
     execute.add_argument("script")
     branch = commands.add_parser("branch")
     branch.add_argument("id", type=identity_argument)
@@ -1470,9 +1484,12 @@ def main():
     arguments = parser.parse_args(command_line)
     if not Path("/.dockerenv").exists():
         raise ValueError("Run the controller through lamp on the Docker host.")
-    os.umask(0o077)
+    previous_umask = os.umask(0o077)
     if arguments.command == "exec":
-        environment = load_environment(arguments.id)
+        environment = environment_by_directory(arguments.directory) if arguments.directory is not None else load_environment(arguments.id)
+        if environment is None:
+            os.umask(previous_umask)
+            os.execvp("bash", ["bash", "-lc", arguments.script])
         if environment["status"] != "ready":
             raise ValueError("Environment is not ready.")
         os.chdir(environment_project(environment))
@@ -1723,15 +1740,10 @@ def main():
             return
         elif arguments.command == "build":
             if arguments.directory is not None:
-                directory = arguments.directory.resolve()
-                matches = [item for item in environments() if directory.is_relative_to(Path(item["path"]).resolve())]
-                if not matches:
-                    raise ValueError(f"No environment is registered for directory {directory}; specify an id or subdomain.")
-                depth = max(len(Path(item["path"]).resolve().parts) for item in matches)
-                matches = [item for item in matches if len(Path(item["path"]).resolve().parts) == depth]
-                if len(matches) != 1:
-                    raise ValueError(f"Multiple environments match directory {directory}; specify an id or subdomain.")
-                arguments.id = matches[0]["id"]
+                environment = environment_by_directory(arguments.directory)
+                if environment is None:
+                    raise ValueError(f"No environment is registered for directory {arguments.directory.resolve()}; specify an id or subdomain.")
+                arguments.id = environment["id"]
             identity = validate_identity(arguments.id)
             load_environment(identity)
             if identity not in desired:

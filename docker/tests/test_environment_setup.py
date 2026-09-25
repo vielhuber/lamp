@@ -670,6 +670,80 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertTrue((child / 'build-result.txt').exists())
         self.assertFalse((project / 'build-result.txt').exists())
 
+    def test_exec_by_directory_selects_project_and_loads_its_setup(self):
+        project = control.PROJECTS / 'parent'
+        child = project / 'child'
+        folder = child / 'folder with spaces # $(false)'
+        folder.mkdir(parents=True)
+        self.invoke('add', '--subdomain', 'parent')
+        self.invoke('add', '--subdomain', 'different-name', '--directory', 'parent/child')
+        environment = next(item for item in control.environments() if item['path'] == str(child))
+        for arguments in (('--directory', str(child)), ('--directory', str(folder)), ('different-name',)):
+            with self.subTest(arguments=arguments), patch.object(control.os, 'chdir') as change_directory, \
+                 patch.object(control.os, 'execvp', side_effect=SystemExit(0)) as execute, \
+                 patch.object(control, 'read_desired', side_effect=AssertionError('exec must not reconcile')), \
+                 self.assertRaises(SystemExit):
+                self.invoke('exec', *arguments, 'printf "%s" "$LAMP_ID" && false')
+            change_directory.assert_called_once_with(child)
+            shell, command = execute.call_args.args
+            self.assertEqual('bash', shell)
+            self.assertEqual(['bash', '-c'], command[:2])
+            self.assertIn(environment['setup_environment'], command[2])
+            self.assertTrue(command[2].endswith('printf "%s" "$LAMP_ID" && false'))
+
+    def test_exec_outside_registered_projects_keeps_generic_container_shell(self):
+        (control.PROJECTS / 'project').mkdir()
+        self.invoke('add', '--subdomain', 'project')
+        os.umask(0o022)
+        with patch.object(control.os, 'chdir') as change_directory, \
+             patch.object(control.os, 'execvp', side_effect=SystemExit(0)) as execute, \
+             self.assertRaises(SystemExit):
+            self.invoke('exec', '--directory', str(control.PROJECTS / 'project-other'), 'exit 7')
+        change_directory.assert_not_called()
+        execute.assert_called_once_with('bash', ['bash', '-lc', 'exit 7'])
+        self.assertEqual(0o022, os.umask(0o022))
+
+    def test_exec_rejects_unready_or_ambiguous_environment_without_running_command(self):
+        project = control.PROJECTS / 'project'
+        project.mkdir()
+        self.invoke('add', '--id', self.identity, '--subdomain', 'project')
+        environment = control.load_environment(self.identity)
+        environment['status'] = 'failed'
+        control.save_environment(environment)
+        with patch.object(control.os, 'execvp') as execute, self.assertRaisesRegex(ValueError, 'not ready'):
+            self.invoke('exec', '--directory', str(project), 'echo must-not-run')
+        execute.assert_not_called()
+        with patch.object(control, 'environments', return_value=[environment, environment]), \
+             patch.object(control.os, 'execvp') as execute, \
+             self.assertRaisesRegex(ValueError, 'Multiple environments match'):
+            self.invoke('exec', '--directory', str(project), 'echo must-not-run')
+        execute.assert_not_called()
+
+    def test_host_exec_forwards_directory_and_script_unchanged_and_preserves_exit_status(self):
+        root = control.PROJECTS.parent
+        folder = root / 'folder with spaces # $(false)'
+        folder.mkdir()
+        (root / '.git').mkdir()
+        (root / '.config').mkdir()
+        (root / '.config/setup.yaml').write_text('domain: example.test\n')
+        (root / 'docker').mkdir()
+        (root / 'docker/docker-compose.override.yml').write_text('services: {}\n')
+        (root / 'lamp').write_text((Path(__file__).parents[2] / 'lamp').read_text())
+        (root / 'bin').mkdir()
+        docker = root / 'bin/docker'
+        docker.write_text('#!/usr/bin/env python3\nimport json, sys\nif sys.argv[1] == "info": sys.exit(0)\nprint(json.dumps(sys.argv[1:]))\nsys.exit(7)\n')
+        docker.chmod(0o755)
+        script = 'printf "%s" "$LAMP_ID" && false'
+        for selection, expected in (([], ['--directory', str(folder), '--']), (['demo'], ['demo'])):
+            with self.subTest(selection=selection):
+                result = subprocess.run(['bash', str(root / 'lamp'), 'exec', *selection, script],
+                                        cwd=folder, env={**os.environ, 'PATH': f'{root / "bin"}:{os.environ["PATH"]}'},
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(7, result.returncode, result.stderr)
+                arguments = json.loads(result.stdout)
+                self.assertEqual(['exec', '-T', 'app', 'python3', '/opt/lamp/control.py', 'exec', *expected, script],
+                                 arguments[arguments.index('exec'):])
+
     def test_list_search_filters_environments_by_any_value(self):
         other = 'abcdef012346'
         (control.PROJECTS / 'alpha').mkdir()
