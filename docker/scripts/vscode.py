@@ -74,6 +74,7 @@ if not bridge.is_dir():
 request = bridge / (uuid4().hex + '.request')
 response = request.with_suffix('.response')
 request.with_suffix('.tmp').write_text(json.dumps(str(folder)))
+os.chown(request.with_suffix('.tmp'), bridge.stat().st_uid, -1)
 request.with_suffix('.tmp').replace(request)
 try:
     deadline = time.monotonic() + 180

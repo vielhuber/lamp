@@ -83,6 +83,45 @@ for _ in range(2):
         self.assertEqual(3, len(calls))
         self.assertTrue(all(arguments[0] == '--folder-uri' for arguments in calls[1:]))
 
+    @unittest.skipUnless(os.geteuid() == 0, 'Different filesystem owners require root.')
+    def test_container_request_is_readable_by_unprivileged_host(self):
+        import pwd
+        import time
+
+        account = pwd.getpwnam('nobody')
+        self.root.chmod(0o755)
+        (self.root / 'bin').chmod(0o755)
+        config = self.root / 'config'
+        config.chmod(0o700)
+        os.chown(config, account.pw_uid, account.pw_gid)
+        calls = self.root / 'calls'
+        calls.touch(mode=0o600)
+        os.chown(calls, account.pw_uid, account.pw_gid)
+        host = subprocess.Popen(
+            ['python3', str(BRIDGE), '--lamp-host', str(config), '/lamp-app-1', 'sleep', '10'],
+            env=self.environment, user=account.pw_uid, group=account.pw_gid,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        try:
+            for _ in range(50):
+                bridges = list(config.glob('.code-*'))
+                if bridges:
+                    break
+                time.sleep(0.02)
+            self.assertEqual(1, len(bridges))
+            self.assertEqual(0o700, bridges[0].stat().st_mode & 0o777)
+            environment = {**self.environment, 'LAMP_CODE_BRIDGE': str(bridges[0])}
+            result = subprocess.run(
+                ['python3', str(BRIDGE), '.'], cwd=self.folder, env=environment,
+                capture_output=True, text=True, timeout=5,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(3, len(calls.read_text().splitlines()))
+        finally:
+            host.terminate()
+            host.communicate(timeout=5)
+        self.assertEqual([], list(config.iterdir()))
+
     def test_host_open_failure_reaches_container_command(self):
         result = self.invoke(TEST_OPEN_STATUS='4')
         self.assertEqual(4, result.returncode)

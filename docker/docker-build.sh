@@ -38,6 +38,7 @@ step 'base packages and container preparation'
 # Keep downloads in the external BuildKit cache, not in image layers.
 mv /etc/apt/apt.conf.d/docker-clean "$build_directory/docker-clean"
 printf 'APT::Keep-Downloaded-Packages "true";\n' > /etc/apt/apt.conf.d/lamp-build-cache
+printf 'Acquire::Retries "5";\nAPT::Update::Error-Mode "any";\n' > /etc/apt/apt.conf.d/80-lamp-network
 
 # Package post-install scripts must not start services while building the image.
 printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d
