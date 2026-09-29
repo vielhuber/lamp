@@ -23,7 +23,7 @@ class AuditTest(unittest.TestCase):
         (self.root / 'bin').mkdir()
         source = (ROOT / 'docker/scripts/audit.sh').read_text()
         self.script = source.replace('/var/www', str(self.projects)).replace('/etc/lamp-config/env.yaml', str(self.config))
-        self.script = self.script.replace('/etc/lamp-config/setup.yaml', str(self.setup))
+        self.script = self.script.replace('/etc/lamp-config/setup.yaml', str(self.setup)).replace('/tmp/lamp-audit.log', str(self.root / 'audit.log'))
         self.environment = {**os.environ, 'PATH': str(self.root / 'bin') + ':' + os.environ['PATH'],
                             'TEST_ROOT': str(self.root), 'TEST_REPOSITORIES': '', 'TEST_ORGANIZATIONS': '',
                             'TEST_ORGANIZATION_REPOSITORIES': '', 'TEST_DIRTY': '',
@@ -283,7 +283,7 @@ printf '{"dependency":"^2.0.0"}'
         manifest = '{"devDependencies":{"critical":"^8.0.0"}}'
         (project / 'package.json').write_text(manifest)
         self.executable('ncu', '''
-[[ "$*" = *--no-upgrade* && "$*" = *'--install never'* && "$*" = *'--timeout 60000'* ]] || exit 2
+[[ "$*" = *--no-upgrade* && "$*" = *'--install never'* && "$*" = *'--timeout 10000'* ]] || exit 2
 printf '{"critical":"^9.0.0"}'
 ''')
         output = self.invoke()
@@ -300,10 +300,22 @@ printf '{"critical":"^9.0.0"}'
     def test_failed_npm_check_is_not_reported_as_up_to_date(self):
         project = self.project('project')
         (project / 'package.json').write_text('{}')
-        self.executable('ncu', 'exit 1')
+        self.executable('ncu', 'printf x >> "$TEST_ROOT/ncu-attempts"; exit 1')
         output = self.invoke()
         self.assertIn('[npm check failed]', output)
         self.assertIn('0 projects are up to date.', output)
+        self.assertEqual('xxxxx', (self.root / 'ncu-attempts').read_text())
+        self.assertEqual(5, (self.root / 'audit.log').read_text().count('attempt='))
+
+    def test_stalled_npm_check_is_retried(self):
+        project = self.project('project')
+        (project / 'package.json').write_text('{}')
+        self.executable('ncu', '''
+printf x >> "$TEST_ROOT/ncu-attempts"
+[[ "$(cat "$TEST_ROOT/ncu-attempts")" = xx ]] || exit 1
+printf '{}'
+''')
+        self.assertIn('1 projects are up to date.', self.invoke())
 
     def test_host_dispatches_audit_inside_container_without_builds(self):
         (self.root / 'lamp').write_text((ROOT / 'lamp').read_text())

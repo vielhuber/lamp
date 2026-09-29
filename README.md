@@ -207,6 +207,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 - database accounts are scoped per environment, but any build or php application can reach the whole container, other environments and mounted credentials
 - every environment is routed through the tunnel; cloudflare access decides who gets in
 - the host `/var/www` is bind-mounted read/write: changes inside the container are changes on the host
+- files written by the container therefore belong to root on the host. When a normal Linux user owns the projects, mount them through an [idmapped mount](https://man7.org/linux/man-pages/man8/mount.8.html) that maps container root to that user and use it as the source of the projects mount, e.g. `- /srv/lamp/www:/var/www` in `.config/setup.yaml` with `mount --bind -o 'X-mount.idmap=u:0:1000:1 u:1000:0:1 u:1:1:999 u:1001:1001:64535 g:0:1000:1 g:1000:0:1 g:1:1:999 g:1001:1001:64535' /var/www /srv/lamp/www` (requires a filesystem with idmapped mount support such as ext4, btrfs or xfs). The container keeps working as root and sees these files as root, while the host sees them as the user's. `env.yaml` written by `lamp add` keeps the owner of the mounted `.config` folder.
 
 </details>
 

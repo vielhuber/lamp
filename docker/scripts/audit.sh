@@ -96,6 +96,8 @@ for d in ./*/; do
     [[ ${#n} -gt $max ]] && max=${#n}
 done
 printf 'Analyzing %d projects...\n\n' "$projects"
+audit_log=/tmp/lamp-audit.log
+: > "$audit_log"
 
 for d in ./*/; do
     n=$(basename "$d")
@@ -146,7 +148,17 @@ for d in ./*/; do
         case "$manifest" in
             */package.json)
                 [[ "$n" = vuejs-tutorial ]] && continue
-                if nout=$(cd "$directory" && ncu --jsonUpgraded --no-upgrade --install never --minimal --dep prod,dev,optional,peer --timeout 60000 --retry 0 2>/dev/null) &&
+                # registry connections sporadically stall until the timeout, a fresh run usually succeeds
+                for attempt in 1 2 3 4 5; do
+                    ncu_result=0
+                    ncu_start=$SECONDS
+                    nout=$(cd "$directory" && NODE_OPTIONS=--trace-exit ncu --jsonUpgraded --no-upgrade --install never --minimal --dep prod,dev,optional,peer --timeout 10000 --retry 0 2>"$audit_log.stderr") || ncu_result=$?
+                    printf '%s %s attempt=%s exit=%s duration=%ss\n' "$(date +%T)" "$directory" "$attempt" "$ncu_result" "$((SECONDS - ncu_start))" >> "$audit_log"
+                    [[ "$ncu_result" -eq 0 ]] && break
+                    cat "$audit_log.stderr" >> "$audit_log"
+                    ss -tnio '( dport = :443 )' >> "$audit_log" 2>&1
+                done
+                if [[ "$ncu_result" -eq 0 ]] &&
                     major_updates=$(jq -e --slurpfile package "$manifest" '
                         def major: capture("^[~^<>=v[:space:]]*(?<major>[0-9]+)").major | tonumber;
                         ($package[0] | (.dependencies // {}) + (.devDependencies // {}) + (.optionalDependencies // {}) + (.peerDependencies // {})) as $dependencies |

@@ -538,6 +538,9 @@ def write_desired(entries, original):
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as temporary:
         # One document per entry, separated by blank lines, so the file stays readable when edited by hand.
         temporary.write("\n".join(yaml.safe_dump([ordered_settings(entry)], sort_keys=False, allow_unicode=True) for entry in entries) or "[]\n")
+        # .config is edited on the host; keep the file owned by the owner of the mounted folder, not by container root.
+        owner = path.parent.stat()
+        os.chown(temporary.name, owner.st_uid, owner.st_gid)
     try:
         if (path.read_bytes() if path.exists() else None) != original:
             raise ValueError("env.yaml changed concurrently; retry without overwriting the edit.")

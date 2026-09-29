@@ -105,6 +105,12 @@ class DesiredFileTest(unittest.TestCase):
         control.write_desired([], control.read_desired()[1])
         self.assertEqual('[]\n', self.file.read_text())
 
+    @unittest.skipUnless(os.geteuid() == 0, 'changing file owners requires root, as in the container')
+    def test_written_file_keeps_the_owner_of_the_mounted_config_folder(self):
+        os.chown(control.SETUP, 1000, 1000)
+        control.write_desired([control.validate_specification({'subdomain': 'one'})], None)
+        self.assertEqual((1000, 1000), (self.file.stat().st_uid, self.file.stat().st_gid))
+
     def test_services_are_reloaded_after_build_and_on_remove(self):
         control.write_desired([], None)
         identity = self.invoke('add', '--build', ':')['id']
