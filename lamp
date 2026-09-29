@@ -157,12 +157,12 @@ sync_data() {
         if [[ ! -d /var/lib/lamp/data/.git ]]; then exit 3; fi
         export GIT_SSH_COMMAND="ssh -i /var/lib/lamp/data/ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/var/lib/lamp/data/ssh/known_hosts"
         for attempt in {1..5}; do
-            if git -C /var/lib/lamp/data fetch --quiet origin; then break; fi
+            if git -c safe.directory=/var/lib/lamp/data -C /var/lib/lamp/data fetch --quiet origin; then break; fi
             if (( attempt == 5 )); then exit 4; fi
             printf "⚠️ data fetch failed (attempt %s/5); retrying in 5 seconds\n" "$attempt" >&2
             sleep 5
         done
-        git -C /var/lib/lamp/data reset --quiet --hard "@{upstream}"
+        git -c safe.directory=/var/lib/lamp/data -C /var/lib/lamp/data reset --quiet --hard "@{upstream}"
         # git keeps no private modes; ssh refuses keys that others can read
         chmod -R go= /var/lib/lamp/data' < /dev/null || data_result=$?
     if [[ "$data_result" = 4 ]]; then

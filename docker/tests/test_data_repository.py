@@ -19,6 +19,10 @@ class DataRepositoryTest(unittest.TestCase):
         git = self.root / 'bin/git'
         git.write_text('''#!/bin/bash
 set -euo pipefail
+if [[ "$1" = -c ]]; then
+    [[ "$2" = "safe.directory=$TEST_ROOT/data" ]] || exit 93
+    shift 2
+fi
 if [[ "$1" = -C ]]; then
     if [[ "$3" = fetch ]]; then
         count=0
