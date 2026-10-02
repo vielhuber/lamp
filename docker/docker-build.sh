@@ -625,14 +625,18 @@ curl -fsSL https://opencode.ai/install -o opencode-install.sh
 bash opencode-install.sh
 curl --compressed -fsSL https://antigravity.google/cli/install.sh -o antigravity-install.sh
 bash antigravity-install.sh
-mkdir -p /root/.claude /root/.codex /root/.agents /root/.config/opencode /root/.antigravity
+mkdir -p /root/.claude /root/.codex /root/.agents /root/.config/opencode /root/.gemini/config
 ln -s /var/www/skills/AGENTS.md /root/.claude/CLAUDE.md
 ln -s /var/www/skills /root/.claude/skills
 ln -s /var/www/skills/AGENTS.md /root/.codex/AGENTS.md
 ln -s /var/www/skills /root/.agents/skills
 ln -s /var/www/skills/AGENTS.md /root/.config/opencode/AGENTS.md
 ln -s /var/www/skills /root/.config/opencode/skills
-ln -s /var/www/skills/AGENTS.md /root/.antigravity/AGENTS.md
+# antigravity reads global rules and skills from ~/.gemini/config, not from ~/.antigravity or ~/.agents
+ln -s /var/www/skills/AGENTS.md /root/.gemini/config/AGENTS.md
+ln -s /var/www/skills /root/.gemini/config/skills
+mkdir -p /root/.gemini/antigravity-cli
+printf '%s\n' '{"toolPermission": "always-proceed", "artifactReviewPolicy": "always-proceed"}' > /root/.gemini/antigravity-cli/settings.json
 
 #### httrack
 step 'httrack'
