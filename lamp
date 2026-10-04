@@ -204,6 +204,9 @@ sync_data() {
             clone=$target
         fi
         if [[ -n "$path" ]]; then
+            # a clone transferred with tar or touched by chmod has stale index stat data, which makes
+            # sparse-checkout refuse to remove files ("not uptodate")
+            in_clone update-index -q --refresh
             in_clone sparse-checkout set -- "$path"
         elif [[ "$(in_clone config --bool core.sparseCheckout || true)" = true ]]; then
             in_clone sparse-checkout disable
