@@ -69,17 +69,22 @@ fi
 # Output log file
 echo "⚡ Automatically generating git commit message... ⚡"
 
-# Fetch the staged git diff, omit dependency bundles and package version bumps, and strip long lines
-diff=$(
+# The staged changes without dependency bundles
+staged_diff() {
     git -C "$(git rev-parse --show-toplevel)" diff \
-        --unified=10 \
         --staged \
         --no-color \
+        "$@" \
         -- . \
         ':(exclude,glob)**/node_modules/**' \
         ':(exclude,glob)**/vendor/**' \
         ':(exclude,glob)**/bundle.js' \
-        ':(exclude,glob)**/bundle.css' | \
+        ':(exclude,glob)**/bundle.css'
+}
+
+# Fetch the staged git diff, omit package version bumps, and strip long lines
+diff=$(
+    staged_diff --unified=10 | \
         sed \
             -e '/.\{1000\}./d' | \
         awk '
@@ -94,47 +99,53 @@ diff=$(
 # Log the diff for reference
 echo "$diff" > "$diff_log"
 
-# Add diff to prompts array
-prompts["user.ai"]="$diff"
-
 # Escape special characters for JSON formatting
+escape() {
+    local value=$1
+    value=$(sed -r 's/\\/\\\\/g' <<< "$value") # \
+    value=$(sed -r 's/"/\\\"/g' <<< "$value") # "
+    value=$(sed ':a;N;$!ba;s/\n/\\n/g' <<< "$value") # \n
+    sed 's/\t/    /g' <<< "$value" # tabs
+}
 for prompts__key in "${!prompts[@]}"; do
-    prompts[$prompts__key]=$(sed -r 's/\\/\\\\/g' <<< "${prompts[$prompts__key]}") # \
-    prompts[$prompts__key]=$(sed -r 's/"/\\\"/g' <<< "${prompts[$prompts__key]}") # "
-    prompts[$prompts__key]=$(sed ':a;N;$!ba;s/\n/\\n/g' <<< "${prompts[$prompts__key]}") # \n
-    prompts[$prompts__key]=$(sed 's/\t/    /g' <<< "${prompts[$prompts__key]}") # tabs
+    prompts[$prompts__key]=$(escape "${prompts[$prompts__key]}")
 done
 
 # Trim strings
 for prompts__key in "${!prompts[@]}"; do
-    if [[ "$prompts__key" != "user.ai" ]]; then
-        prompts[$prompts__key]=$(sed -r 's/\\n( +)/\\n/g' <<< "${prompts[$prompts__key]}") # Remove blank space
-        prompts[$prompts__key]=$(sed -r 's/^\\n//g' <<< "${prompts[$prompts__key]}") # Remove first line break
-        prompts[$prompts__key]=$(sed -r 's/\\n$//g' <<< "${prompts[$prompts__key]}") # Remove last line break
-    fi
+    prompts[$prompts__key]=$(sed -r 's/\\n( +)/\\n/g' <<< "${prompts[$prompts__key]}") # Remove blank space
+    prompts[$prompts__key]=$(sed -r 's/^\\n//g' <<< "${prompts[$prompts__key]}") # Remove first line break
+    prompts[$prompts__key]=$(sed -r 's/\\n$//g' <<< "${prompts[$prompts__key]}") # Remove last line break
 done
 
-# Prepare the payload for the API request
-payload="{
+# Send the changes to the API and capture the response
+request() {
+    payload="{
     \"model\": \"$chatgpt_model\",${chatgpt_reasoning_effort:+
     \"reasoning_effort\": \"$chatgpt_reasoning_effort\",}
     \"messages\": [
         { \"role\": \"system\", \"content\": \"${prompts["system"]}\" },
         { \"role\": \"user\", \"content\": \"${prompts["user.intro"]}\" },
         { \"role\": \"user\", \"content\": \"${prompts["user.pre"]}\" },
-        { \"role\": \"user\", \"content\": \"${prompts["user.ai"]}\" }
+        { \"role\": \"user\", \"content\": \"$(escape "$1")\" }
     ]
 }"
+    # Save payload to log for debugging purposes
+    echo "$payload" > "$data_log"
+    response=$(curl "$chatgpt_url" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $chatgpt_api_key" \
+        --silent \
+        --data-binary "@$data_log")
+}
+request "$diff"
 
-# Save payload to log for debugging purposes
-echo "$payload" > "$data_log"
-
-# Make the API call using curl and capture the response
-response=$(curl "$chatgpt_url" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $chatgpt_api_key" \
-    --silent \
-    --data-binary "@$data_log")
+# A diff beyond the model's context window: summarize the list of changed files instead
+if [[ $response =~ \"error\"[[:space:]]*: && $response =~ context ]]; then
+    echo "Diff too large; generating the message from the list of changed files..."
+    request "The full diff is too large; this is only the output of \"git diff --stat\" (changed files and line counts):
+$(staged_diff --stat=200)"
+fi
 
 # Log the raw response for debugging
 echo "$response" > "$output_log"

@@ -98,11 +98,20 @@ require_docker() {
     fi
     return 1
 }
-configured_data_repository() {
+# a top-level scalar of setup.yaml (data, data_path)
+configured_value() {
     local value
-    value=$(sed -n 's/^data:[[:space:]]*//p' "$directory/.config/setup.yaml" | sed "s/[[:space:]]*\(#.*\)\?$//; s/^[\"']//; s/[\"']$//")
+    value=$(sed -n "s/^$1:[[:space:]]*//p" "$directory/.config/setup.yaml" | sed "s/[[:space:]]*\(#.*\)\?$//; s/^[\"']//; s/[\"']$//")
     if [[ "$value" = null || "$value" = '~' ]]; then value=; fi
     printf '%s' "$value"
+}
+# data_path: a relative folder inside the data repository, only together with data
+check_data_path() {
+    if [[ -z "$data_path" ]]; then return; fi
+    if [[ -z "$data_repository" || ! "$data_path" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$ ]]; then
+        printf '%s\n' '❌ data_path in .config/setup.yaml must be a relative folder inside the data repository (e.g. lamp or config/lamp) and needs data.' >&2
+        exit 2
+    fi
 }
 # mounts in setup.yaml use the docker short syntax: - /host/path:/container/path[:ro]
 configured_mounts() {
@@ -129,7 +138,10 @@ write_mount_override() {
     done
     printf '%s\n' "$override" > "$directory/docker/docker-compose.override.yml"
 }
-# with a data repository /etc/lamp is a clone inside the container (state volume), mirrored from the repository afterwards
+# with a data repository /etc/lamp is a clone inside the container (state volume), mirrored from the repository afterwards:
+# /var/lib/lamp/data is the clone itself, or with data_path a link to that folder of the clone in /var/lib/lamp/repository,
+# which then is a partial sparse clone that only downloads the files of that folder (the docker entrypoint links /etc/lamp
+# to /var/lib/lamp/data)
 read_data_key() {
     local line
     if ! { : < /dev/tty; } 2> /dev/null; then
@@ -154,37 +166,91 @@ sync_data() {
     if [[ "$command" = build || "$command" = syncdb || "$command" = add ]]; then in_container=("${compose[@]}" exec -T app); fi
     data_result=0
     "${in_container[@]}" bash -c 'set -euo pipefail
-        if [[ ! -d /var/lib/lamp/data/.git ]]; then exit 3; fi
-        export GIT_SSH_COMMAND="ssh -i /var/lib/lamp/data/ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/var/lib/lamp/data/ssh/known_hosts"
+        repository=$1 path=$2
+        clone=/var/lib/lamp/data
+        if [[ -d /var/lib/lamp/repository/.git ]]; then clone=/var/lib/lamp/repository; fi
+        if [[ ! -d "$clone/.git" ]]; then exit 3; fi
+        in_clone() { git -c safe.directory="$clone" -C "$clone" "$@"; }
+        # a partial clone cannot fetch the files of another repository or of the whole tree: clone again
+        if [[ "$clone" = /var/lib/lamp/repository && ( -z "$path" || "$(in_clone remote get-url origin)" != "$repository" ) ]]; then
+            rm -rf -- /var/lib/lamp/repository /var/lib/lamp/data
+            exit 3
+        fi
+        # the key of the data moves within the clone when the layout or the repository changes, so ssh uses a copy
+        keys=$(mktemp -d /dev/shm/lamp-data.XXXXXXXX)
+        trap "rm -rf -- \"$keys\"" EXIT
+        ssh=/var/lib/lamp/data/ssh
+        if [[ ! -e "$ssh/id_rsa" && -n "$path" ]]; then ssh=$clone/$path/ssh; fi
+        if [[ -f "$ssh/id_rsa" ]]; then cp "$ssh/id_rsa" "$keys/id_rsa"; fi
+        if [[ -f "$ssh/known_hosts" ]]; then cp "$ssh/known_hosts" "$keys/known_hosts"; fi
+        export GIT_SSH_COMMAND="ssh -i $keys/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$keys/known_hosts"
+        # a changed data or data_path in setup.yaml switches an existing full clone instead of cloning again
+        if [[ "$(in_clone remote get-url origin)" != "$repository" ]]; then in_clone remote set-url origin "$repository"; fi
+        if [[ -n "$path" ]]; then
+            in_clone config remote.origin.promisor true
+            in_clone config remote.origin.partialclonefilter blob:none
+        fi
         for attempt in {1..5}; do
-            if git -c safe.directory=/var/lib/lamp/data -C /var/lib/lamp/data fetch --quiet origin; then break; fi
+            if in_clone fetch --quiet --prune origin; then break; fi
             if (( attempt == 5 )); then exit 4; fi
             printf "⚠️ data fetch failed (attempt %s/5); retrying in 5 seconds\n" "$attempt" >&2
             sleep 5
         done
-        git -c safe.directory=/var/lib/lamp/data -C /var/lib/lamp/data reset --quiet --hard "@{upstream}"
+        target=/var/lib/lamp/data
+        if [[ -n "$path" ]]; then target=/var/lib/lamp/repository; fi
+        if [[ "$clone" != "$target" ]]; then
+            rm -rf -- "$target"
+            mv -- "$clone" "$target"
+            clone=$target
+        fi
+        if [[ -n "$path" ]]; then
+            in_clone sparse-checkout set -- "$path"
+        elif [[ "$(in_clone config --bool core.sparseCheckout || true)" = true ]]; then
+            in_clone sparse-checkout disable
+        fi
+        in_clone reset --quiet --hard "@{upstream}"
+        if [[ -n "$path" ]]; then
+            if [[ ! -d "$clone/$path" ]]; then
+                printf "❌ data_path %s does not exist in %s.\n" "$path" "$repository" >&2
+                exit 5
+            fi
+            rm -rf -- /var/lib/lamp/data
+            ln -s "repository/$path" /var/lib/lamp/data
+        fi
         # git keeps no private modes; ssh refuses keys that others can read
-        chmod -R go= /var/lib/lamp/data' < /dev/null || data_result=$?
+        chmod -R go= "$clone"' lamp "$data_repository" "$data_path" < /dev/null || data_result=$?
     if [[ "$data_result" = 4 ]]; then
         printf '❌ The data repository %s could not be fetched after 5 attempts; aborting.\n' "$data_repository" >&2
     elif [[ "$data_result" = 0 && ( "$command" = start || "$command" = restart ) ]]; then
         printf '📦 data is up to date with %s\n' "$data_repository"
     fi
+    if [[ "$data_result" = 3 && "${data_cloned:-}" = true ]]; then
+        printf '❌ The fresh clone of %s is not usable.\n' "$data_repository" >&2
+        exit 3
+    fi
     if [[ "$data_result" = 3 ]]; then
         data_result=0
+        data_clone=/var/lib/lamp/data
+        clone_options=()
+        if [[ -n "$data_path" ]]; then
+            data_clone=/var/lib/lamp/repository
+            clone_options=(--filter=blob:none --sparse)
+        fi
         (
             umask 077
             data_checkout=$(mktemp -d) || exit 1
             trap 'rm -rf -- "$data_checkout"' EXIT
             printf '📥 cloning %s with host SSH access\n' "$data_repository"
-            GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
-                git clone --progress -- "$data_repository" "$data_checkout/data" || exit 3
+            export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+            git clone --progress "${clone_options[@]}" -- "$data_repository" "$data_checkout/data" || exit 3
+            if [[ -n "$data_path" ]]; then git -C "$data_checkout/data" sparse-checkout set -- "$data_path" || exit 3; fi
             printf '📦 transferring data repository into the container\n'
             tar -C "$data_checkout/data" -cf - . | "${in_container[@]}" bash -c 'set -euo pipefail
                 umask 077
-                mkdir -p /var/lib/lamp/data
-                tar -xf - -C /var/lib/lamp/data
-                chmod -R go= /var/lib/lamp/data' || exit 1
+                rm -rf -- "$1"
+                mkdir -p "$1"
+                tar -xf - -C "$1"
+                chmod -R go= "$1"' lamp "$data_clone" || exit 1
         ) || data_result=$?
         if [[ "$data_result" = 3 ]]; then
             read_data_key
@@ -193,8 +259,11 @@ sync_data() {
                 umask 077
                 trap "rm -f /dev/shm/lamp-data-key" EXIT
                 cat > /dev/shm/lamp-data-key
-                GIT_SSH_COMMAND="ssh -i /dev/shm/lamp-data-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR" git clone --progress "$1" /var/lib/lamp/data
-                chmod -R go= /var/lib/lamp/data' lamp "$data_repository" || data_result=$?
+                export GIT_SSH_COMMAND="ssh -i /dev/shm/lamp-data-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR"
+                rm -rf -- "$2"
+                git clone --progress "${@:4}" "$1" "$2"
+                if [[ -n "$3" ]]; then git -C "$2" sparse-checkout set -- "$3"; fi
+                chmod -R go= "$2"' lamp "$data_repository" "$data_clone" "$data_path" "${clone_options[@]}" || data_result=$?
             data_key=
         fi
         if [[ "$data_result" != 0 ]]; then
@@ -202,6 +271,9 @@ sync_data() {
             exit "$data_result"
         fi
         printf '📦 cloned %s\n' "$data_repository"
+        # the fresh clone gets its layout (data_path link, owner-only modes) from a normal sync
+        data_cloned=true
+        sync_data
     elif [[ "$data_result" != 0 ]]; then
         exit "$data_result"
     fi
@@ -266,17 +338,24 @@ docker_setup() {
     config="$directory/.config"
     domain=example.com
     data_repository=
+    data_path=
     mounts=()
     ignored_folders=()
     # a new installation is asked for its domain and its data repository; without a terminal the presets stay as they are
     if [[ -e "$config/setup.yaml" ]]; then
-        data_repository=$(configured_data_repository)
+        data_repository=$(configured_value data)
+        data_path=$(configured_value data_path)
+        check_data_path
     elif { : < /dev/tty; } 2> /dev/null; then
         read -r -p 'Domain of the environments (<domain> in https://<subdomain>.<domain>): ' domain < /dev/tty
         read -r -p 'Private git repository with the data of this instance (ssh url, empty for a local .data folder): ' data_repository < /dev/tty
         if [[ -n "$data_repository" && ! "$data_repository" =~ ^git@[A-Za-z0-9.-]+:[A-Za-z0-9_./-]+$ ]]; then
             printf '%s\n' '❌ The data repository must be an ssh url like git@github.com:<owner>/lamp-data.git.' >&2
             exit 2
+        fi
+        if [[ -n "$data_repository" ]]; then
+            read -r -p 'Folder of the data inside that repository (empty for the repository root): ' data_path < /dev/tty
+            check_data_path
         fi
         # the projects directory comes first; environments report container paths, so keep it at the same path
         read -r -p 'Projects mount into the container (/host/path:/container/path[:ro]) [/var/www:/var/www]: ' mount < /dev/tty
@@ -302,6 +381,7 @@ docker_setup() {
     write_presets
     setup="domain: ${domain:-example.com}"
     if [[ -n "$data_repository" ]]; then setup+=$'\n\n'"data: $data_repository"; fi
+    if [[ -n "$data_path" ]]; then setup+=$'\n'"data_path: $data_path"; fi
     if (( ${#mounts[@]} > 0 )); then
         setup+=$'\n\nmounts:'
         for mount in "${mounts[@]}"; do setup+=$'\n    - '"$mount"; done
@@ -591,13 +671,16 @@ if [[ "$command" = status || "$command" = version ]]; then
     exit 0
 fi
 data_repository=
+data_path=
 if [[ "$command" != docker-reset ]]; then
     if [[ ! -f "$LAMP_CONFIG_DIR/setup.yaml" || ! -f "$directory/docker/docker-compose.override.yml" ]]; then
         printf '%s\n' '❌ Missing .config/setup.yaml or docker/docker-compose.override.yml. Run ./lamp docker-setup first.' >&2
         exit 1
     fi
     chmod 700 "$LAMP_CONFIG_DIR"
-    data_repository=$(configured_data_repository)
+    data_repository=$(configured_value data)
+    data_path=$(configured_value data_path)
+    check_data_path
     # without a data repository the .data folder is mounted at /etc/lamp
     if [[ -z "$data_repository" ]]; then compose+=(-f "$directory/docker/docker-compose.data.yml"); fi
 fi

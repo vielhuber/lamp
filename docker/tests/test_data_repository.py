@@ -20,7 +20,7 @@ class DataRepositoryTest(unittest.TestCase):
         git.write_text('''#!/bin/bash
 set -euo pipefail
 if [[ "$1" = -c ]]; then
-    [[ "$2" = "safe.directory=$TEST_ROOT/data" ]] || exit 93
+    [[ "$2" = "safe.directory=$TEST_ROOT/data" || "$2" = "safe.directory=$TEST_ROOT/repository" ]] || exit 93
     shift 2
 fi
 if [[ "$1" = -C ]]; then
@@ -35,6 +35,9 @@ if [[ "$1" = -C ]]; then
         fi
     fi
     if [[ "$3" = reset ]]; then touch "$TEST_ROOT/reset"; fi
+    if [[ "$3 $4" = "remote get-url" ]]; then cat "$TEST_ROOT/origin" 2>/dev/null || echo git@example.test:owner/data.git; fi
+    if [[ "$3 $4" = "remote set-url" ]]; then echo "$6" > "$TEST_ROOT/origin"; fi
+    if [[ "$3 $4" = "sparse-checkout set" ]]; then echo "$6" > "$TEST_ROOT/sparse"; fi
     exit 0
 fi
 target="${@: -1}"
@@ -48,8 +51,10 @@ else
     [[ "$GIT_SSH_COMMAND" = *test-ssh-config* ]] || exit 92
     [[ "${TEST_FAIL_HOST:-0}" = 0 ]] || exit 1
 fi
-mkdir -p "$target/.git"
+echo "$*" >> "$TEST_ROOT/clone-arguments"
+mkdir -p "$target/.git" "$target/lamp"
 printf 'repository data' > "$target/settings.yaml"
+printf 'folder data' > "$target/lamp/settings.yaml"
 ''')
         git.chmod(0o755)
         sleep = self.root / 'bin/sleep'
@@ -58,6 +63,7 @@ printf 'repository data' > "$target/settings.yaml"
         source = LAMP.read_text()
         functions = source[source.index('require_docker() {'):source.index('\npreset() {')]
         functions = functions.replace('/var/lib/lamp/data', str(self.root / 'data'))
+        functions = functions.replace('/var/lib/lamp/repository', str(self.root / 'repository'))
         functions = functions.replace('/dev/shm/lamp-data-key', str(self.root / 'lamp-data-key'))
         self.script = '''set -euo pipefail
 docker() {
@@ -77,6 +83,7 @@ read_data_key() {
 compose=(docker compose)
 command=start
 data_repository=git@example.test:owner/data.git
+data_path=${TEST_DATA_PATH:-}
 sync_data
 '''
         self.environment = {**os.environ, 'PATH': str(self.root / 'bin') + ':' + os.environ['PATH'],
@@ -156,6 +163,45 @@ sync_data
         self.assertFalse((self.root / 'reset').exists())
         self.assertFalse((self.root / 'prompted').exists())
         self.assertNotIn('continuing with the last state', result.stderr)
+
+    def test_data_path_clones_partially_and_links_the_folder(self):
+        result = self.invoke(TEST_DATA_PATH='lamp')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn('--filter=blob:none --sparse', (self.root / 'clone-arguments').read_text())
+        self.assertTrue((self.root / 'repository/.git').is_dir())
+        self.assertEqual('repository/lamp', os.readlink(self.root / 'data'))
+        self.assertEqual('folder data', (self.root / 'data/settings.yaml').read_text())
+        self.assertEqual('lamp\n', (self.root / 'sparse').read_text())
+        self.assertEqual(0, (self.root / 'repository/lamp/settings.yaml').stat().st_mode & 0o077)
+
+    def test_existing_clone_switches_to_a_new_repository_and_data_path_without_cloning(self):
+        (self.root / 'data/.git').mkdir(parents=True)
+        (self.root / 'data/lamp').mkdir()
+        (self.root / 'origin').write_text('git@example.test:owner/old.git\n')
+        result = self.invoke(TEST_DATA_PATH='lamp')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertFalse((self.root / 'calls').exists())
+        self.assertEqual('git@example.test:owner/data.git\n', (self.root / 'origin').read_text())
+        self.assertTrue((self.root / 'repository/.git').is_dir())
+        self.assertEqual('repository/lamp', os.readlink(self.root / 'data'))
+        self.assertTrue((self.root / 'reset').exists())
+
+    def test_leaving_the_data_path_layout_clones_again(self):
+        (self.root / 'repository/.git').mkdir(parents=True)
+        (self.root / 'data').symlink_to('repository/lamp')
+        result = self.invoke()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual('host\n', (self.root / 'calls').read_text())
+        self.assertFalse((self.root / 'repository').exists())
+        self.assertFalse((self.root / 'data').is_symlink())
+        self.assertEqual('repository data', (self.root / 'data/settings.yaml').read_text())
+
+    def test_missing_data_path_in_the_repository_aborts(self):
+        (self.root / 'repository/.git').mkdir(parents=True)
+        result = self.invoke(TEST_DATA_PATH='missing')
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('data_path missing does not exist', result.stderr)
+        self.assertFalse((self.root / 'data').exists())
 
 
 if __name__ == '__main__':

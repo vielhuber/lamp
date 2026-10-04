@@ -60,12 +60,17 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual({'domain': 'example.test'}, control.configuration())
         (self.root / 'setup.yaml').write_text('domain: example.test\nignore_from_audit:\n    - uploads\n    - my folder\n')
         self.assertEqual({'domain': 'example.test'}, control.configuration())
+        (self.root / 'setup.yaml').write_text('domain: example.test\ndata: git@example.test:owner/setup.git\ndata_path: _01_LAMP/config\n')
+        self.assertEqual({'domain': 'example.test'}, control.configuration())
         for text in ['data: git@example.test:owner/lamp-data.git', 'domain: example.test\nother: 1', 'domain: example.test\ndata: [x]', 'domain: Example.Test',
                      'domain: example.test\nmounts: /var/www:/var/www', 'domain: example.test\nmounts: [var/www:/var/www]',
                      'domain: example.test\nmounts: [/var/www]', 'domain: example.test\nmounts: ["/var/www:/var/www:rw"]',
                      'domain: example.test\nignore_from_audit: uploads', 'domain: example.test\nignore_from_audit: [a/b]',
                      'domain: example.test\nignore_from_audit: [".."]', 'domain: example.test\nignore_from_audit: [""]',
-                     'domain: example.test\nignore_from_audit: [1]']:
+                     'domain: example.test\nignore_from_audit: [1]', 'domain: example.test\ndata_path: lamp',
+                     'domain: example.test\ndata: git@example.test:owner/setup.git\ndata_path: ../lamp',
+                     'domain: example.test\ndata: git@example.test:owner/setup.git\ndata_path: /lamp',
+                     'domain: example.test\ndata: git@example.test:owner/setup.git\ndata_path: [lamp]']:
             with self.subTest(text=text), self.assertRaises(ValueError):
                 (self.root / 'setup.yaml').write_text(text + '\n')
                 control.configuration()

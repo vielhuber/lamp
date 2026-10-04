@@ -217,7 +217,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 | path                                 | contents                                                                          | survives `docker-reset` |
 | ------------------------------------ | --------------------------------------------------------------------------------- | ----------------------- |
-| `.config/setup.yaml`                 | host-specific: `domain`, optional `data` repository and `mounts` (mode 600)       | yes                     |
+| `.config/setup.yaml`                 | host-specific: `domain`, optional `data` repository, `data_path` and `mounts` (mode 600) | yes                     |
 | `.config/env.yaml`                   | host-specific: desired environments (mode 600)                                    | yes                     |
 | `.data/settings.yaml`                | optional `git`, `apache`, `postfix`, `cloudflare`, `php`, `vpn`, … (mode 600)     | yes                     |
 | `docker/docker-compose.override.yml` | host-specific mounts and ports; generated from `mounts` in `setup.yaml` (gitignored) | yes                  |
@@ -242,12 +242,13 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>configuration</summary>
 
-- `./lamp docker-setup` writes `.config/setup.yaml` (mode 600) with the answers for `domain`, `data`, `mounts` (first the projects directory, default `/var/www:/var/www`, then further mounts until an empty answer) and `ignore_from_audit` (folders until an empty answer), and `.data/settings.yaml` (mode 600) with every optional section as a commented example
+- `./lamp docker-setup` writes `.config/setup.yaml` (mode 600) with the answers for `domain`, `data`, `data_path` (asked only with a repository), `mounts` (first the projects directory, default `/var/www:/var/www`, then further mounts until an empty answer) and `ignore_from_audit` (folders until an empty answer), and `.data/settings.yaml` (mode 600) with every optional section as a commented example
 
 | key in `setup.yaml` | default  | effect                                                                                       |
 | ------------------- | -------- | -------------------------------------------------------------------------------------------- |
 | `domain`            | required | base domain of every environment; a change reapplies all environments on `start` / `restart` |
 | `data`              | unset    | ssh url of the private [data repository](#data-repository) that replaces `.data`             |
+| `data_path`         | unset    | relative folder inside the data repository that holds the data (e.g. `_01_LAMP`); unset = repository root; needs `data` |
 | `mounts`            | unset    | list of bind mounts in docker short syntax `/host/path:/container/path[:ro]`; `start` / `restart` regenerate `docker/docker-compose.override.yml` from it, a change recreates the container. Keep `/var/www:/var/www` first, since environments report container paths. Without `mounts` the override file stays as it is |
 | `ignore_from_audit` | unset    | list of folder names directly in `/var/www` that `lamp audit` skips in every check (no git, project and dependency checks); a skipped clone still counts as present for missing GitHub repositories |
 
@@ -277,6 +278,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary>data repository</summary>
 
 - `data: git@github.com:<owner>/lamp-data.git` in `.config/setup.yaml` replaces the `.data` folder by that private repository: `settings.yaml`, `ssh/`, `vpn/`, `build/`, `syncdb/` are the same on every host, only `.config` differs
+- the data may also live in a folder of a larger private repository: `data_path: <folder>` next to `data` names it (relative, e.g. `_01_LAMP`). lamp then keeps a partial sparse clone in `/var/lib/lamp/repository` that only downloads the files of that folder (and of the repository root), and `/var/lib/lamp/data` links to the folder, so the other folders of the repository never reach the server
+- changing `data` or adding `data_path` on an installation with a full clone switches that clone on the next `start` / `restart` (new origin, fetch with the clone's current `ssh/id_rsa`, new layout) without cloning again; the key therefore needs read access to the new repository. Leaving a `data_path` layout (another repository or no `data_path`) deletes the partial clone and clones again
 - lamp keeps its own clone inside the container at `/var/lib/lamp/data` (state volume), `/etc/lamp` links to it; `docker-reset` deletes it with the rest of the state, the next `start` clones it again
 - maintain the data in a normal clone anywhere (e.g. `/var/www/lamp-data`), commit and push; lamp never commits or pushes
 - `./lamp docker-setup` asks for the repository, writes the entry, creates no `.data` and clones right away using the host's SSH configuration, keys and agent without prompting; the temporary host checkout is transferred into the container and deleted afterwards. Only if host access fails does it ask for a private ssh key (not echoed, not logged, handed to the container through a pipe and deleted after the clone)

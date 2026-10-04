@@ -99,8 +99,12 @@ def identity_argument(value):
 def configuration():
     # setup.yaml belongs to this host, settings.yaml to the data folder that several hosts may share.
     setup = yaml.safe_load((SETUP / "setup.yaml").read_text())
-    if (not isinstance(setup, dict) or "domain" not in setup or set(setup) - {"domain", "data", "mounts", "ignore_from_audit"}
+    if (not isinstance(setup, dict) or "domain" not in setup or set(setup) - {"domain", "data", "data_path", "mounts", "ignore_from_audit"}
             or (setup.get("data") is not None and not isinstance(setup["data"], str))
+            or (setup.get("data_path") is not None
+                and (not isinstance(setup.get("data"), str)
+                     or not isinstance(setup["data_path"], str)
+                     or not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*", setup["data_path"])))
             or (setup.get("mounts") is not None
                 and (not isinstance(setup["mounts"], list)
                      or any(not isinstance(mount, str) or not re.fullmatch(r"/[^:\n]*:/[^:\n]*(?::ro)?", mount)
@@ -109,7 +113,7 @@ def configuration():
                 and (not isinstance(setup["ignore_from_audit"], list)
                      or any(not isinstance(folder, str) or not re.fullmatch(r"[^/\n]+", folder) or folder in (".", "..")
                             for folder in setup["ignore_from_audit"])))):
-        raise ValueError("setup.yaml must contain domain and optionally data, mounts (/host/path:/container/path[:ro]) "
+        raise ValueError("setup.yaml must contain domain and optionally data, data_path (folder inside data), mounts (/host/path:/container/path[:ro]) "
                          "and ignore_from_audit (folder names in /var/www); see README.md.")
     path = CONFIGURATION / "settings.yaml"
     value = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
