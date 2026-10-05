@@ -181,6 +181,11 @@ sync_data() {
         trap "rm -rf -- \"$keys\"" EXIT
         ssh=/var/lib/lamp/data/ssh
         if [[ ! -e "$ssh/id_rsa" && -n "$path" ]]; then ssh=$clone/$path/ssh; fi
+        # the host tar transfer preserves UID 1000, but /root/.ssh must belong to root
+        if [[ -d "$ssh" ]]; then
+            chown -R 0:0 "$ssh"
+            chmod -R go= "$ssh"
+        fi
         if [[ -f "$ssh/id_rsa" ]]; then cp "$ssh/id_rsa" "$keys/id_rsa"; fi
         if [[ -f "$ssh/known_hosts" ]]; then cp "$ssh/known_hosts" "$keys/known_hosts"; fi
         export GIT_SSH_COMMAND="ssh -i $keys/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$keys/known_hosts"

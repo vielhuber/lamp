@@ -132,6 +132,22 @@ sync_data
         self.assertFalse((self.root / 'prompted').exists())
         self.assertFalse((self.root / 'calls').exists())
 
+    @unittest.skipUnless(os.geteuid() == 0, 'Changing SSH file ownership requires root.')
+    def test_existing_data_ssh_files_belong_to_container_root(self):
+        (self.root / 'data/.git').mkdir(parents=True)
+        ssh = self.root / 'data/ssh'
+        ssh.mkdir()
+        configuration = ssh / 'config'
+        configuration.write_text('Host example.test\n')
+        os.chown(ssh, 1000, 1000)
+        os.chown(configuration, 1000, 1000)
+        configuration.chmod(0o664)
+        result = self.invoke()
+        self.assertEqual(0, result.returncode, result.stderr)
+        for path in [ssh, configuration]:
+            self.assertEqual((0, 0), (path.stat().st_uid, path.stat().st_gid))
+            self.assertEqual(0, path.stat().st_mode & 0o077)
+
     def test_add_keeps_json_output_separate_from_data_repository_progress(self):
         for existing in (False, True):
             with self.subTest(existing=existing):
