@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 shopt -s nullglob dotglob
+check_npm_vulnerabilities=true
+if [[ ${1:-} == --no-npm-vulnerabilities ]]; then check_npm_vulnerabilities=false; fi
 if [[ -t 1 && "${TERM:-dumb}" != dumb ]]; then clear; fi
 cd /var/www || exit 1
 
@@ -110,6 +112,9 @@ for d in ./*/; do
         lamp_ok=1
     fi
     npm_ok=0
+    npm_vulnerabilities=0
+    npm_audit_failed=0
+    npm_audit_error=''
     comp_ok=0
     phprc_ok=0
     nvmrc_ok=0
@@ -126,8 +131,15 @@ for d in ./*/; do
     a=0
     b=0
     if git -C "$d" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-        fetch_result=0
-        timeout 60s git -C "$d" fetch --all --prune >/dev/null 2>&1 || fetch_result=$?
+        for attempt in 1 2 3 4 5; do
+            fetch_result=0
+            fetch_start=$SECONDS
+            timeout 60s git -C "$d" fetch --all --prune >"$audit_log.stderr" 2>&1 || fetch_result=$?
+            printf '%s git-fetch %s attempt=%s exit=%s duration=%ss\n' "$(date +%T)" "${d%/}" "$attempt" "$fetch_result" "$((SECONDS - fetch_start))" >> "$audit_log"
+            [[ "$fetch_result" -eq 0 ]] && break
+            cat "$audit_log.stderr" >> "$audit_log"
+            [[ "$attempt" -lt 5 ]] && sleep 5
+        done
         [[ "$fetch_result" -eq 124 ]] && fetch_timeout=1
         [[ "$fetch_result" -ne 0 && "$fetch_result" -ne 124 ]] && fetch_failed=1
         a=$(git -C "$d" rev-list --count --left-only HEAD...@{u})
@@ -147,6 +159,19 @@ for d in ./*/; do
         directory=${manifest%/*}
         case "$manifest" in
             */package.json)
+                if "$check_npm_vulnerabilities"; then
+                    npm_audit_result=0
+                    npm_audit_options=()
+                    [[ -f "$directory/package-lock.json" || -f "$directory/npm-shrinkwrap.json" ]] || npm_audit_options+=(--no-package-lock)
+                    security=$(cd "$directory" && npm audit --json "${npm_audit_options[@]}" --fetch-timeout=10000 --fetch-retries=2 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=2000 2>"$audit_log.stderr") || npm_audit_result=$?
+                    if [[ "$npm_audit_result" -le 1 ]] && vulnerabilities=$(jq -er '.metadata.vulnerabilities.total | select(type == "number" and . >= 0 and floor == .)' <<< "$security" 2>/dev/null); then
+                        npm_vulnerabilities=$((npm_vulnerabilities + vulnerabilities))
+                        [[ "$npm_audit_result" -ne 0 && "$vulnerabilities" -eq 0 ]] && npm_audit_failed=1
+                    else
+                        npm_audit_failed=1
+                        npm_audit_error=$(jq -r '.error.code // "invalid response"' <<< "$security" 2>/dev/null) || npm_audit_error='invalid response'
+                    fi
+                fi
                 [[ "$n" = vuejs-tutorial ]] && continue
                 # registry connections sporadically stall until the timeout, a fresh run usually succeeds
                 for attempt in 1 2 3 4 5; do
@@ -186,7 +211,7 @@ for d in ./*/; do
         [[ "$(cat "$d/wp-content/themes/$n/.nvmrc")" = 'lts/*' ]] || nvmrc_ok=1
     fi
 
-    if [[ "$lamp_ok" -eq 0 && "$npm_ok" -eq 0 && "$comp_ok" -eq 0 && "$phprc_ok" -eq 0 && "$nvmrc_ok" -eq 0 && "$mod_ok" -eq 0 && "$sync_ok" -eq 0 && "$fetch_timeout" -eq 0 && "$fetch_failed" -eq 0 && "$pull_failed" -eq 0 ]]; then
+    if [[ "$lamp_ok" -eq 0 && "$npm_ok" -eq 0 && "$npm_vulnerabilities" -eq 0 && "$npm_audit_failed" -eq 0 && "$comp_ok" -eq 0 && "$phprc_ok" -eq 0 && "$nvmrc_ok" -eq 0 && "$mod_ok" -eq 0 && "$sync_ok" -eq 0 && "$fetch_timeout" -eq 0 && "$fetch_failed" -eq 0 && "$pull_failed" -eq 0 ]]; then
         up_to_date=$((up_to_date+1))
     else
         m=''
@@ -194,6 +219,8 @@ for d in ./*/; do
         [[ "$lamp_ok" -eq 2 ]] && m="${m}lamp check failed, "
         [[ "$npm_ok" -eq 1 ]] && m="${m}npm, "
         [[ "$npm_ok" -eq 2 ]] && m="${m}npm check failed, "
+        [[ "$npm_vulnerabilities" -gt 0 ]] && m="${m}npm vulnerabilities ($npm_vulnerabilities), "
+        [[ "$npm_audit_failed" -eq 1 ]] && m="${m}npm audit failed${npm_audit_error:+ ($npm_audit_error)}, "
         [[ "$comp_ok" -eq 1 ]] && m="${m}composer, "
         [[ "$phprc_ok" -eq 1 ]] && m="${m}php, "
         [[ "$nvmrc_ok" -eq 1 ]] && m="${m}nvm, "

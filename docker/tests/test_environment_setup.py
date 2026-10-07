@@ -137,6 +137,19 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.invoke('build', '--directory', str(project))
         self.assertEqual('0|', (project / 'build-result.txt').read_text())
 
+    def test_existing_site_is_available_during_build_and_failed_build_disables_it(self):
+        site = control.ENABLED / ('lamp-' + self.identity + '.conf')
+        self.vhost.side_effect = lambda environment: site.write_text(environment['document_root'])
+        build = 'test -f ' + str(site) + ' && test ! -f fail-build && printf built > build-result.txt'
+        self.invoke('add', '--id', self.identity, '--subdomain', 'manual', '--build', build)
+        self.invoke('build', 'manual')
+        self.assertEqual('built', (control.PROJECTS / 'manual/build-result.txt').read_text())
+        self.assertTrue(site.exists())
+        (control.PROJECTS / 'manual/fail-build').touch()
+        with self.assertRaisesRegex(RuntimeError, 'bash failed'):
+            self.invoke('build', 'manual')
+        self.assertFalse(site.exists())
+
     def test_shared_script_changes_do_not_rebuild_or_reconfigure_static_environments(self):
         remote = 'git@example.test:owner/project.git'
         script = control.build_script(remote)

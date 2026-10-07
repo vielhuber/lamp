@@ -1325,6 +1325,12 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         variables = write_setup(environment)
         # Static environments and adopted directories only build on explicit request.
         if build is not None and (project_owned or force_build):
+            # Render-based builds must be able to request the existing site while they run.
+            if current and current.get("document_root") and current["webroot"] == arguments.webroot:
+                root = Path(current["document_root"])
+                if root.is_dir() and root.resolve().is_relative_to(project.resolve()):
+                    vhost(environment)
+                    reload_apache()
             log = directory / "build.log"
             print(f"🔨 {hostname}: building in {project} · log: {log}", file=sys.stderr)
             started = time.monotonic()

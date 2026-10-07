@@ -37,6 +37,8 @@ else
     printf '%s\\n' "$TEST_ORGANIZATION_REPOSITORIES"
 fi
 ''')
+        self.executable('sleep', 'printf \"%s\\n\" \"$*\" >> \"$TEST_ROOT/retry-delays\"')
+        self.executable('npm', 'printf \'{"metadata":{"vulnerabilities":{"total":0}}}\'')
         self.executable('git', '''
 project=$2
 shift 2
@@ -72,8 +74,8 @@ esac
             self.config.write_text(json.dumps(entries))
         return project
 
-    def invoke(self, **environment):
-        result = subprocess.run(['bash', '-c', self.script], env={**self.environment, **environment},
+    def invoke(self, *arguments, **environment):
+        result = subprocess.run(['bash', '-c', self.script, 'audit', *arguments], env={**self.environment, **environment},
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(0, result.returncode, result.stderr)
         return result.stdout
@@ -231,6 +233,36 @@ fi
             self.assertIn(warning, output)
             self.assertFalse((self.root / 'pulled').exists())
 
+    def test_fetch_recovers_on_retry_before_pulling(self):
+        self.project('project')
+        self.executable('git', (self.root / 'bin/git').read_text().split('set -eu\n', 1)[1].replace(
+            'fetch) exit "$TEST_FETCH" ;;', '''
+fetch)
+        printf x >> "$TEST_ROOT/fetch-attempts"
+        if [[ "$(cat "$TEST_ROOT/fetch-attempts")" != xx ]]; then
+            printf "fatal: Could not resolve host: github.com\\n" >&2
+            exit 128
+        fi ;;'''))
+        output = self.invoke(TEST_BEHIND='1')
+        self.assertIn('1 projects are up to date.', output)
+        self.assertNotIn('fetch failed', output)
+        self.assertTrue((self.root / 'pulled').exists())
+        self.assertEqual('xx', (self.root / 'fetch-attempts').read_text())
+        log = (self.root / 'audit.log').read_text()
+        self.assertIn('Could not resolve host', log)
+        self.assertIn('git-fetch ./project attempt=1 exit=128', log)
+        self.assertIn('git-fetch ./project attempt=2 exit=0', log)
+        self.assertEqual(['5'], (self.root / 'retry-delays').read_text().splitlines())
+
+    def test_persistent_fetch_failures_are_bounded_and_never_pulled(self):
+        self.project('project')
+        output = self.invoke(TEST_BEHIND='1', TEST_FETCH='128')
+        self.assertIn('fetch failed', output)
+        self.assertFalse((self.root / 'pulled').exists())
+        calls = (self.root / 'git-calls').read_text().splitlines()
+        self.assertEqual(5, calls.count('project fetch'))
+        self.assertEqual(['5'] * 4, (self.root / 'retry-delays').read_text().splitlines())
+
     def test_diverged_repository_stays_flagged_without_merging(self):
         self.project('project')
         output = self.invoke(TEST_BEHIND='1', TEST_DIVERGED='1')
@@ -297,6 +329,75 @@ printf '{"critical":"^9.0.0"}'
         self.executable('ncu', 'printf \'{"minor":"^2.1.0","patch":"~1.0.1"}\'')
         self.assertIn('1 projects are up to date.', self.invoke())
 
+    def test_wordpress_security_findings_are_reported_without_major_updates(self):
+        project = self.project('project')
+        theme = project / 'wp-content/themes/project'
+        theme.mkdir(parents=True)
+        (theme / 'package.json').write_text('{}')
+        self.executable('ncu', "printf '{}'")
+        self.executable('npm', '''
+printf '%s\\n' "$PWD" > "$TEST_ROOT/security-directory"
+printf '{"metadata":{"vulnerabilities":{"total":8}}}'
+exit 1
+''')
+        output = self.invoke()
+        self.assertIn('[npm vulnerabilities (8)]', output)
+        self.assertIn('0 projects are up to date.', output)
+        self.assertEqual(str(theme), (self.root / 'security-directory').read_text().strip())
+
+    def test_failed_security_audit_is_not_reported_as_clean(self):
+        (self.project('project') / 'package.json').write_text('{}')
+        self.executable('ncu', "printf '{}'")
+        self.executable('npm', 'printf \'{"error":{"code":"ENOLOCK"}}\'; exit 1')
+        output = self.invoke()
+        self.assertIn('[npm audit failed (ENOLOCK)]', output)
+        self.assertIn('0 projects are up to date.', output)
+
+    def test_no_npm_vulnerabilities_skips_security_for_all_manifests_but_checks_versions(self):
+        project = self.project('project')
+        theme = project / 'wp-content/themes/project'
+        theme.mkdir(parents=True)
+        for directory in (project, theme):
+            (directory / 'package.json').write_text('{"dependencies":{"example":"^1.0.0"}}')
+        self.executable('npm', 'touch "$TEST_ROOT/security-called"; printf \'{"metadata":{"vulnerabilities":{"total":8}}}\'; exit 1')
+        self.executable('ncu', 'printf x >> "$TEST_ROOT/ncu-calls"; printf \'{"example":"^2.0.0"}\'')
+        output = self.invoke('--no-npm-vulnerabilities')
+        self.assertFalse((self.root / 'security-called').exists())
+        self.assertEqual('xx', (self.root / 'ncu-calls').read_text())
+        self.assertIn('[npm]', output)
+        self.assertNotIn('npm vulnerabilities', output)
+        self.assertNotIn('npm audit failed', output)
+        self.assertIn('project fetch', (self.root / 'git-calls').read_text())
+
+    def test_security_audit_without_lockfile_uses_supported_resolution(self):
+        project = self.project('project')
+        (project / 'package.json').write_text('{}')
+        self.executable('ncu', "printf '{}'")
+        self.executable('npm', '''
+printf '%s\\n' "$@" > "$TEST_ROOT/security-arguments"
+printf '{"metadata":{"vulnerabilities":{"total":0}}}'
+''')
+        self.assertIn('1 projects are up to date.', self.invoke())
+        self.assertIn('--no-package-lock', (self.root / 'security-arguments').read_text().splitlines())
+        self.assertFalse((project / 'package-lock.json').exists())
+
+    def test_security_audit_preserves_existing_lockfiles(self):
+        project = self.project('project')
+        (project / 'package.json').write_text('{}')
+        self.executable('ncu', "printf '{}'")
+        self.executable('npm', '''
+printf '%s\\n' "$@" > "$TEST_ROOT/security-arguments"
+printf '{"metadata":{"vulnerabilities":{"total":0}}}'
+''')
+        for name in ['package-lock.json', 'npm-shrinkwrap.json']:
+            with self.subTest(lockfile=name):
+                lockfile = project / name
+                lockfile.write_text('{}')
+                self.assertIn('1 projects are up to date.', self.invoke())
+                self.assertNotIn('--no-package-lock', (self.root / 'security-arguments').read_text().splitlines())
+                self.assertEqual('{}', lockfile.read_text())
+                lockfile.unlink()
+
     def test_failed_npm_check_is_not_reported_as_up_to_date(self):
         project = self.project('project')
         (project / 'package.json').write_text('{}')
@@ -305,7 +406,7 @@ printf '{"critical":"^9.0.0"}'
         self.assertIn('[npm check failed]', output)
         self.assertIn('0 projects are up to date.', output)
         self.assertEqual('xxxxx', (self.root / 'ncu-attempts').read_text())
-        self.assertEqual(5, (self.root / 'audit.log').read_text().count('attempt='))
+        self.assertEqual(5, sum('attempt=' in line and 'git-fetch' not in line for line in (self.root / 'audit.log').read_text().splitlines()))
 
     def test_stalled_npm_check_is_retried(self):
         project = self.project('project')
@@ -324,14 +425,17 @@ printf '{}'
         (self.root / 'docker').mkdir()
         (self.root / 'docker/docker-compose.override.yml').write_text('services: {}\n')
         self.executable('docker', 'printf "%s\\n" "$*" >> "$TEST_ROOT/docker-calls"\nif [[ "$1" = image ]]; then exit 1; fi')
-        result = subprocess.run(['bash', str(self.root / 'lamp'), 'audit'], env=self.environment,
-                                capture_output=True, text=True, timeout=10)
-        self.assertEqual(0, result.returncode, result.stderr)
-        calls = (self.root / 'docker-calls').read_text().splitlines()
-        self.assertEqual(4, len(calls))
-        self.assertEqual(['info', 'image inspect ghcr.io/vielhuber/lamp:latest', 'info'], calls[:3])
-        self.assertTrue(calls[3].endswith('exec -T app bash /opt/lamp/audit.sh'))
-        self.assertNotIn('build', calls[3])
+        for arguments in ([], ['--no-npm-vulnerabilities']):
+            with self.subTest(arguments=arguments):
+                (self.root / 'docker-calls').write_text('')
+                result = subprocess.run(['bash', str(self.root / 'lamp'), 'audit', *arguments], env=self.environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(0, result.returncode, result.stderr)
+                calls = (self.root / 'docker-calls').read_text().splitlines()
+                self.assertEqual(4, len(calls))
+                self.assertEqual(['info', 'image inspect ghcr.io/vielhuber/lamp:latest', 'info'], calls[:3])
+                self.assertTrue(calls[3].endswith('exec -T app bash /opt/lamp/audit.sh' + (' ' + arguments[0] if arguments else '')))
+                self.assertNotIn('build', calls[3])
 
 
 if __name__ == '__main__':
