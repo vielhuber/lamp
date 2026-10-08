@@ -163,7 +163,11 @@ done
 
 #### uopz: only enable temporarily
 step 'uopz: only enable temporarily'
-phpdismod uopz
+for version in "${php_versions[@]}"; do
+    if [[ -f /etc/php/$version/mods-available/uopz.ini ]]; then
+        phpdismod -v "$version" uopz
+    fi
+done
 
 #### apache extensions
 step 'apache extensions'
@@ -400,6 +404,7 @@ bash nvm-install.sh
     for version in node --lts; do
         nvm install "$version"
         nvm install-latest-npm
+        npm config set allow-git=all --location=global
     done
     nvm use --lts
     nvm alias default "$(nvm current)"
