@@ -1507,6 +1507,7 @@ def main():
             raise ValueError("Environment is not ready.")
         os.chdir(environment_project(environment))
         setup = environment.get("setup_environment")
+        os.umask(0o022)
         os.execvp("bash", ["bash", "-c", "set -e\n" + ("source " + shlex.quote(setup) + "\n" if setup else "") + arguments.script])
     if arguments.command == "syncdb":
         # The parent build already holds control.lock while this child performs the import.

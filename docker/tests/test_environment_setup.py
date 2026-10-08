@@ -704,6 +704,34 @@ class EnvironmentSetupTest(unittest.TestCase):
             self.assertIn(environment['setup_environment'], command[2])
             self.assertTrue(command[2].endswith('printf "%s" "$LAMP_ID" && false'))
 
+    def test_exec_creates_web_readable_files_without_exposing_setup_or_logs(self):
+        project = control.PROJECTS / 'project'
+        (project / 'nested').mkdir(parents=True)
+        self.invoke('add', '--id', self.identity, '--subdomain', 'project')
+        environment = control.load_environment(self.identity)
+        log = control.STATE / 'environments' / self.identity / 'build.log'
+        log.write_text('private build output')
+        self.addCleanup(os.chdir, os.getcwd())
+
+        def execute(shell, command):
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            raise SystemExit(result.returncode)
+
+        for selection in ((self.identity,), ('project',), ('--directory', str(project)),
+                          ('--directory', str(project / 'nested'))):
+            for inherited_umask in (0o022, 0o077):
+                with self.subTest(selection=selection, inherited_umask=inherited_umask):
+                    os.umask(inherited_umask)
+                    directory = project / f'assets-{len(list(project.glob("assets-*")))}'
+                    script = f'mkdir {directory.name} && printf bundle > {directory.name}/bundle.js'
+                    with patch.object(control.os, 'execvp', side_effect=execute), self.assertRaises(SystemExit):
+                        self.invoke('exec', *selection, script)
+                    self.assertEqual(0o755, directory.stat().st_mode & 0o777)
+                    self.assertEqual(0o644, (directory / 'bundle.js').stat().st_mode & 0o777)
+                    self.assertEqual(0o600, Path(environment['setup_environment']).stat().st_mode & 0o777)
+                    self.assertEqual(0o600, log.stat().st_mode & 0o777)
+
     def test_exec_outside_registered_projects_keeps_generic_container_shell(self):
         (control.PROJECTS / 'project').mkdir()
         self.invoke('add', '--subdomain', 'project')
