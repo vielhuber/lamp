@@ -39,6 +39,7 @@ ENV PATH="/root/.local/bin:/root/.cargo/bin:/root/.opencode/bin:/root/.syncdb/ve
     LANG=en_US.UTF-8 \
     TZ=Europe/Berlin \
     COMPOSER_ALLOW_SUPERUSER=1 \
+    COMPOSER_POLICY_ADVISORIES_BLOCK=0 \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome \
     PUPPETEER_SKIP_DOWNLOAD=true
 
