@@ -1050,6 +1050,21 @@ def run_sync(environment, profile):
         destination.unlink(missing_ok=True)
 
 
+def resolve_document_root(project, webroot):
+    root = project
+    for subdirectory in ("public", "web"):
+        if (project / subdirectory / "index.php").is_file():
+            root = project / subdirectory
+            break
+    if webroot is not None:
+        root = project / webroot
+    if not root.is_dir():
+        return None
+    if not root.resolve().is_relative_to(project.resolve()):
+        raise ValueError("The document root must resolve inside the project directory.")
+    return root
+
+
 def vhost(environment):
     hostname = environment["hostname"]
     root = environment["document_root"]
@@ -1325,12 +1340,18 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
         variables = write_setup(environment)
         # Static environments and adopted directories only build on explicit request.
         if build is not None and (project_owned or force_build):
-            # Render-based builds must be able to request the existing site while they run.
-            if current and current.get("document_root") and current["webroot"] == arguments.webroot:
-                root = Path(current["document_root"])
-                if root.is_dir() and root.resolve().is_relative_to(project.resolve()):
-                    vhost(environment)
-                    reload_apache()
+            # Render-based builds request the site before the build has finished.
+            document_root = resolve_document_root(project, arguments.webroot)
+            if document_root is not None:
+                environment["document_root"] = str(document_root)
+                save_environment(environment)
+                if project_owned:
+                    run(["chown", "-R", "www-data:www-data", str(project), str(directory / "data")])
+                (directory / "data").chmod(0o755)
+                directory.chmod(0o711)
+                vhost(environment)
+                sync_hosts()
+                reload_apache()
             log = directory / "build.log"
             print(f"🔨 {hostname}: building in {project} · log: {log}", file=sys.stderr)
             started = time.monotonic()
@@ -1376,18 +1397,10 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
             run(["supervisorctl", "update"])
             print(f"✅ {hostname}: built in {round(time.monotonic() - started)}s · {environment['url']}", file=sys.stderr)
         os.umask(0o077)
-        environment["document_root"] = str(project)
-        for subdirectory in ("public", "web"):
-            if (project / subdirectory / "index.php").is_file():
-                environment["document_root"] = str(project / subdirectory)
-                break
-        if arguments.webroot is not None:
-            document_root = project / arguments.webroot
-            if not document_root.is_dir() or not document_root.resolve().is_relative_to(project.resolve()):
-                raise ValueError("webroot must exist after the build and resolve to a directory inside the project.")
-            environment["document_root"] = str(document_root)
-        if not Path(environment["document_root"]).resolve().is_relative_to(project.resolve()):
-            raise ValueError("The document root must resolve inside the project directory.")
+        document_root = resolve_document_root(project, arguments.webroot)
+        if document_root is None:
+            raise ValueError("webroot must exist after the build and resolve to a directory inside the project.")
+        environment["document_root"] = str(document_root)
         if project_owned:
             run(["chown", "-R", "www-data:www-data", str(project), str(directory / "data")])
         (directory / "data").chmod(0o755)

@@ -171,6 +171,65 @@ class EnvironmentSetupTest(unittest.TestCase):
         project = control.PROJECTS / '_environments' / self.identity
         self.assertEqual('dynamic', (project / 'build-result.txt').read_text())
 
+    def test_new_dynamic_site_and_local_hostname_are_available_during_build(self):
+        site = control.ENABLED / ('lamp-' + self.identity + '.conf')
+        self.vhost.side_effect = lambda environment: site.write_text(environment['document_root'])
+        hostname = self.identity + '.example.test'
+        build = f'test -f {site} && grep -q "127.0.0.1 {hostname} # lamp" {control.HOSTS} && printf built > build-result.txt'
+        self.invoke('add', '--id', self.identity, '--build', build)
+        project = control.PROJECTS / '_environments' / self.identity
+        self.assertEqual('built', (project / 'build-result.txt').read_text())
+        self.assertEqual(str(project), site.read_text())
+
+    def test_failed_initial_build_disables_the_prepared_site(self):
+        site = control.ENABLED / ('lamp-' + self.identity + '.conf')
+        self.vhost.side_effect = lambda environment: site.write_text(environment['document_root'])
+        with self.assertRaisesRegex(RuntimeError, r'bash failed \(exit 7\)'):
+            self.invoke('add', '--id', self.identity, '--build', f'test -f {site} && exit 7')
+        self.assertFalse(site.exists())
+        self.assertEqual('failed', control.load_environment(self.identity)['status'])
+
+    def test_webroot_created_by_the_build_is_configured_afterwards(self):
+        site = control.ENABLED / ('lamp-' + self.identity + '.conf')
+        self.vhost.side_effect = lambda environment: site.write_text(environment['document_root'])
+        build = f'test ! -f {site} && mkdir htdocs && printf index > htdocs/index.php'
+        self.invoke('add', '--id', self.identity, '--webroot', 'htdocs', '--build', build)
+        project = control.PROJECTS / '_environments' / self.identity
+        self.assertEqual(str(project / 'htdocs'), site.read_text())
+
+    def test_initial_build_uses_detected_and_explicit_webroots(self):
+        for number, directory in enumerate(('public', 'web', 'htdocs')):
+            with self.subTest(directory=directory):
+                identity = f'{number + 1:012x}'
+                site = control.ENABLED / ('lamp-' + identity + '.conf')
+                self.vhost.side_effect = lambda environment: site.write_text(environment['document_root'])
+
+                def clone(arguments, **kwargs):
+                    if arguments[:2] == ['git', 'clone']:
+                        root = Path(arguments[-1]) / directory
+                        root.mkdir()
+                        (root / 'index.php').write_text('index')
+                    return ''
+
+                self.run.side_effect = clone
+                build = f'test "$(cat {site})" = "$PWD/{directory}" && printf built > build-result.txt'
+                arguments = ['add', '--id', identity, '--git', 'git@example.test:owner/project.git', '--build', build]
+                if directory == 'htdocs':
+                    arguments += ['--webroot', directory]
+                self.invoke(*arguments)
+                project = control.PROJECTS / '_environments' / identity
+                self.assertEqual('built', (project / 'build-result.txt').read_text())
+
+    def test_document_root_cannot_follow_a_symlink_outside_the_project(self):
+        project = control.PROJECTS / 'project'
+        project.mkdir()
+        outside = control.PROJECTS / 'outside'
+        outside.mkdir()
+        (outside / 'index.php').write_text('index')
+        (project / 'public').symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'inside the project'):
+            control.resolve_document_root(project, None)
+
     def prepare_restore_repository(self):
         repository = control.PROJECTS.parent / 'repository'
         repository.mkdir()
