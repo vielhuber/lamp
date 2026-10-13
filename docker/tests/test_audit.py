@@ -118,6 +118,35 @@ esac
         self.setup.write_text('domain: [\n')
         self.assertIn('⚠️ ignore_from_audit in setup.yaml could not be read.', self.invoke())
 
+    def test_repeated_exclusions_combine_with_configured_folders_and_security_flag(self):
+        for name in ('br-kk', 'hovawartdb', 'configured'):
+            project = self.project(name, registered=False)
+            (project / '.origin').write_text(f'git@github.com:vielhuber/{name}.git')
+            (project / 'package.json').write_text('{}')
+        (self.projects / 'uploads').mkdir()
+        self.project('checked')
+        self.setup.write_text('ignore_from_audit:\n    - configured\n')
+        self.executable('npm', 'touch "$TEST_ROOT/security-called"; printf "{}"')
+        output = self.invoke('--exclude', 'br-kk', '--no-npm-vulnerabilities',
+                             '--exclude', 'hovawartdb', '--exclude', 'uploads',
+                             TEST_REPOSITORIES='br-kk git@github.com:vielhuber/br-kk.git', TEST_DIRTY=' M file')
+        self.assertIn('Analyzing 1 projects', output)
+        self.assertRegex(output, r'checked\s+\[modified\]')
+        calls = (self.root / 'git-calls').read_text()
+        for name in ('br-kk', 'hovawartdb', 'configured', 'uploads'):
+            self.assertNotIn(name, output)
+            self.assertNotIn(f'{name} status', calls)
+            self.assertNotIn(f'{name} fetch', calls)
+        self.assertFalse((self.root / 'security-called').exists())
+
+    def test_invalid_audit_options_fail_before_checks(self):
+        for arguments in (['--exclude'], ['--exclude', ''], ['--exclude', '--no-npm-vulnerabilities'], ['--unknown']):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(['bash', '-c', self.script, 'audit', *arguments],
+                                        env=self.environment, capture_output=True, text=True, timeout=10)
+                self.assertEqual(2, result.returncode)
+                self.assertFalse((self.root / 'git-calls').exists())
+
     def test_clean_behind_repository_is_pulled_before_dependency_checks(self):
         project = self.project('clean')
         (project / 'package.json').write_text('{}')
@@ -425,7 +454,9 @@ printf '{}'
         (self.root / 'docker').mkdir()
         (self.root / 'docker/docker-compose.override.yml').write_text('services: {}\n')
         self.executable('docker', 'printf "%s\\n" "$*" >> "$TEST_ROOT/docker-calls"\nif [[ "$1" = image ]]; then exit 1; fi')
-        for arguments in ([], ['--no-npm-vulnerabilities']):
+        for arguments in ([], ['--no-npm-vulnerabilities'],
+                          ['--no-npm-vulnerabilities', '--exclude', 'br-kk', '--exclude', 'hovawartdb'],
+                          ['--exclude', 'br-kk', '--no-npm-vulnerabilities']):
             with self.subTest(arguments=arguments):
                 (self.root / 'docker-calls').write_text('')
                 result = subprocess.run(['bash', str(self.root / 'lamp'), 'audit', *arguments], env=self.environment,
@@ -434,7 +465,7 @@ printf '{}'
                 calls = (self.root / 'docker-calls').read_text().splitlines()
                 self.assertEqual(4, len(calls))
                 self.assertEqual(['info', 'image inspect ghcr.io/vielhuber/lamp:latest', 'info'], calls[:3])
-                self.assertTrue(calls[3].endswith('exec -T app bash /opt/lamp/audit.sh' + (' ' + arguments[0] if arguments else '')))
+                self.assertTrue(calls[3].endswith('exec -T app bash /opt/lamp/audit.sh' + (' ' + ' '.join(arguments) if arguments else '')))
                 self.assertNotIn('build', calls[3])
 
 

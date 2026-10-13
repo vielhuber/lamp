@@ -2,7 +2,21 @@
 set -uo pipefail
 shopt -s nullglob dotglob
 check_npm_vulnerabilities=true
-if [[ ${1:-} == --no-npm-vulnerabilities ]]; then check_npm_vulnerabilities=false; fi
+declare -A ignored=()
+while (( $# )); do
+    case "$1" in
+        --no-npm-vulnerabilities) check_npm_vulnerabilities=false; shift ;;
+        --exclude)
+            if (( $# < 2 )) || [[ -z "$2" || "$2" = --* ]]; then
+                printf '❌ --exclude requires a folder name.\n' >&2
+                exit 2
+            fi
+            ignored["$2"]=1
+            shift 2
+            ;;
+        *) printf '❌ Unknown audit option: %s\n' "$1" >&2; exit 2 ;;
+    esac
+done
 if [[ -t 1 && "${TERM:-dumb}" != dumb ]]; then clear; fi
 cd /var/www || exit 1
 
@@ -31,7 +45,6 @@ audit_own_repository() {
     return 0
 }
 
-declare -A ignored=()
 if ignored_folders=$(yq -r '.ignore_from_audit // [] | .[]' /etc/lamp-config/setup.yaml); then
     while IFS= read -r folder; do
         [[ -n "$folder" ]] && ignored["$folder"]=1
