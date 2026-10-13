@@ -157,10 +157,12 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <details>
 
-<summary>3. build image</summary>
+<summary>3. download image</summary>
 
-- `./lamp docker-build`
+- `docker pull ghcr.io/vielhuber/lamp:latest`
 - `./lamp start`
+
+The complete Git checkout stays local. To test unpublished image changes, stop LAMP and run `./lamp docker-build` instead of pulling.
 
 </details>
 
@@ -168,10 +170,12 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary>update</summary>
 
+- `git pull --ff-only`
+- `docker pull ghcr.io/vielhuber/lamp:latest`
 - `./lamp stop`
-- `git pull`
-- `./lamp docker-build`
 - `./lamp start`
+
+Publish image changes through the GitHub workflow before pulling; updating the checkout alone does not update the image. The instance configuration, project mounts and named data volumes are kept.
 
 </details>
 
