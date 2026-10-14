@@ -235,6 +235,7 @@ Publish image changes through the GitHub workflow before pulling; updating the c
 
 - `.data` is mounted at `/etc/lamp` by `docker/docker-compose.data.yml`, which the cli loads only without a [data repository](#data-repository); `.config` is mounted at `/etc/lamp-config`; `/root/.ssh` links to `/etc/lamp/ssh`
 - `.data` holds what several hosts can share, `.config` what belongs to this host; lamp writes only to `.config`
+- The Composer build presets install the locked versions. If Composer reports an invalid lock file (exit 4), they repair it with `composer update --minimal-changes` and install the result; other failures still stop the build.
 - `.data`, `.config` and `.logs` are excluded from git and from the image
 - on `start` / `restart`, an available host `gh` login for `github.com` is copied into the container using `gh auth token` and [`gh auth login --with-token`](https://cli.github.com/manual/gh_auth_login). The token travels through stdin, never command arguments or logs, and is stored in the container's root-only GitHub CLI configuration. No additional login is needed; without host authentication, existing container credentials stay unchanged.
 - back up `.data`, `.config` and database-consistent dumps separately; `docker-reset` is not an update that preserves environments

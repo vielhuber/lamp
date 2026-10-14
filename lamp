@@ -523,14 +523,14 @@ LAMP_ENV
 for key in APP_URL DB_CONNECTION DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD; do
     sed -i "s|^$key=.*|$key=${!key}|" .env
 done
-composer install --no-interaction
+composer install --no-interaction || { [[ $? == 4 ]] || exit 1; composer update --minimal-changes --no-interaction; }
 npm install
 npm run prod
 PRESET
         preset "$data/build/github.com-phpmyadmin-phpmyadmin.sh" 600 <<'PRESET'
 #!/usr/bin/env bash
 set -euo pipefail
-composer install --no-dev --no-interaction
+composer install --no-dev --no-interaction || { [[ $? == 4 ]] || exit 1; composer update --minimal-changes --no-dev --no-interaction; }
 yarn install --frozen-lockfile --non-interactive
 mkdir -p tmp
 php <<'PHP' > config.inc.php
