@@ -151,6 +151,22 @@ class ChatEnvironmentsTest(unittest.TestCase):
                 self.invoke('branch', self.identity, 'feature/existing')
         self.assertEqual('main', self.git('branch', '--show-current'))
 
+    def test_branch_checkout_keeps_public_files_readable_and_state_private(self):
+        previous = os.umask(0o077)
+        self.addCleanup(os.umask, previous)
+        self.git('switch', 'feature/existing')
+        public = self.project / 'public'
+        public.mkdir()
+        (public / 'bundle.css').write_text('body {}\n')
+        self.git('add', '.')
+        self.git('commit', '-m', 'Add public asset.')
+        self.git('switch', 'main')
+        self.invoke('branch', self.identity, 'feature/existing')
+        self.assertEqual(0o755, public.stat().st_mode & 0o777)
+        self.assertEqual(0o644, (public / 'bundle.css').stat().st_mode & 0o777)
+        metadata = control.STATE / 'environments' / self.identity / 'environment.json'
+        self.assertEqual(0o600, metadata.stat().st_mode & 0o777)
+
     def test_ignored_files_and_foreign_index_locks_are_not_removed(self):
         self.git('switch', 'feature/existing')
         (self.project / 'local.env').write_text('tracked')
@@ -182,7 +198,8 @@ class ChatEnvironmentsTest(unittest.TestCase):
              contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
             control.main()
         self.assertEqual(1, len(calls))
-        self.assertEqual(('bash', ['bash', '-c', 'set -e\necho "$LAMP_ID"']), calls[0])
+        self.assertEqual(('bash', ['bash', '-c', 'set -e\nsource "${NVM_DIR:-/root/.nvm}/nvm.sh" --no-use\n'
+                                 'if [[ -n $(nvm_find_nvmrc) ]]; then nvm use --silent; fi\necho "$LAMP_ID"']), calls[0])
         self.assertEqual(str(self.project), os.getcwd())
 
     def test_access_exports_only_required_headers_for_the_exact_environment(self):

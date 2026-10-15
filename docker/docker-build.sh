@@ -52,7 +52,7 @@ apt-get install -y --no-install-recommends ca-certificates curl wget gnupg local
     fontconfig libpng-dev libfontconfig1 libxrender1 xfonts-75dpi xfonts-base
 # Kernel logs belong to the host and are not accessible inside this container.
 sed -i '/^module(load="imklog"/s/^/# /' /etc/rsyslog.conf
-locale-gen en_US.UTF-8
+locale-gen en_US.UTF-8 de_DE.UTF-8
 ln -snf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
 printf 'Europe/Berlin\n' > /etc/timezone
 mkdir -p /opt/lamp /var/lib/lamp /var/www /run/php /run/mysqld /run/postgresql

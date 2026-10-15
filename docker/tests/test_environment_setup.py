@@ -42,6 +42,12 @@ class EnvironmentSetupTest(unittest.TestCase):
         (control.STATE / 'secrets').mkdir()
         (control.STATE / 'secrets' / 'database-password').write_text('rootpw\n')
         (control.SETUP / 'setup.yaml').write_text('domain: example.test\n')
+        nvm = root / 'nvm'
+        nvm.mkdir()
+        (nvm / 'nvm.sh').write_text('nvm_find_nvmrc() { :; }\n')
+        nvm_environment = patch.dict(os.environ, {'NVM_DIR': str(nvm)})
+        nvm_environment.start()
+        self.addCleanup(nvm_environment.stop)
         self.settings = {'domain': 'example.test'}
         self.identity = 'abcdef012345'
 
@@ -68,7 +74,91 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertNotIn('--depth', clone.args[0])
         self.assertIs(control.sys.stderr, clone.kwargs.get('output'))
 
+    def test_git_add_derives_static_name_and_directory(self):
+        result = json.loads(self.invoke('add', '--git', 'git@example.test:owner/My_Project.git'))
+        environment = control.load_environment(result['id'])
+        self.assertEqual('my-project.example.test', environment['hostname'])
+        self.assertEqual(str(control.PROJECTS / 'My_Project'), environment['path'])
+        self.assertEqual('My_Project', environment['directory'])
+        self.assertEqual(1, len(control.read_desired()[0]))
+        with self.assertRaisesRegex(ValueError, 'my-project.example.test already exists'):
+            self.invoke('add', '--git', 'git@example.test:owner/My_Project.git')
+
+    def test_duplicate_static_add_preserves_configuration_and_does_not_build(self):
+        arguments = ('--git', 'git@example.test:owner/project.git', '--subdomain', 'project', '--build', ':')
+        result = json.loads(self.invoke('add', *arguments))
+        paths = [control.SETUP / 'env.yaml', control.STATE / 'environments' / result['id'] / 'environment.json']
+        before = [path.read_bytes() for path in paths]
+        self.run.reset_mock()
+        with patch.object(control, 'add') as add, self.assertRaisesRegex(ValueError, 'project.example.test already exists'):
+            self.invoke('add', *arguments)
+        add.assert_not_called()
+        self.run.assert_not_called()
+        self.assertEqual(before, [path.read_bytes() for path in paths])
+
+    def test_git_add_preserves_explicit_names(self):
+        for number, extra in enumerate((['--subdomain', 'custom'], ['--directory', 'custom-folder'],
+                                       ['--subdomain', 'custom', '--directory', 'custom-folder'])):
+            extra = [item.replace('custom', f'custom-{number}') for item in extra]
+            with self.subTest(extra=extra):
+                remote = f'https://example.test/owner/project-{number}.git'
+                result = json.loads(self.invoke('add', '--git', remote, *extra))
+                environment = control.load_environment(result['id'])
+                self.assertEqual(f'custom-{number}' if '--subdomain' in extra else f'project-{number}', environment['subdomain'])
+                self.assertEqual(str(control.PROJECTS / (f'custom-{number}-folder' if '--directory' in extra else f'custom-{number}')), environment['path'])
+
+    def test_dynamic_flag_and_existing_id_calls_keep_isolated_environments(self):
+        remote = 'git@example.test:owner/project.git'
+        first = json.loads(self.invoke('add', '--dynamic', '--git', remote))
+        second = json.loads(self.invoke('add', '--dynamic', '--git', remote))
+        legacy = json.loads(self.invoke('add', '--id', self.identity, '--git', remote))
+        self.assertNotEqual(first['id'], second['id'])
+        for result in (first, second, legacy):
+            environment = control.load_environment(result['id'])
+            self.assertIsNone(environment['subdomain'])
+            self.assertEqual(str(control.PROJECTS / '_environments' / result['id']), environment['path'])
+        self.assertEqual([], control.read_desired()[0])
+
+    def test_dynamic_flag_rejects_static_names(self):
+        for extra in (['--subdomain', 'custom'], ['--directory', 'custom']):
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, 'dynamic'):
+                self.invoke('add', '--dynamic', '--git', 'git@example.test:owner/project.git', *extra)
+
+    def test_empty_repository_can_be_added_and_built_without_creating_commits(self):
+        repository = control.PROJECTS.parent / 'empty.git'
+        subprocess.run(['git', 'init', '--bare', '-b', 'main', str(repository)], capture_output=True, check=True)
+        remote = 'git@example.test:owner/empty.git'
+        def run_git(arguments, **kwargs):
+            if arguments[0] != 'git':
+                return ''
+            result = subprocess.run([str(repository) if item == remote else item for item in arguments],
+                                    cwd=kwargs.get('cwd'), capture_output=True, text=True)
+            if result.returncode:
+                raise RuntimeError(f'git failed (exit {result.returncode})')
+            return result.stdout
+
+        self.run.side_effect = run_git
+        for extra in ([], ['--dynamic', '--branch', 'feature/new', '--base-branch', 'main', '--restore-worktree-after-build']):
+            with self.subTest(extra=extra):
+                result = json.loads(self.invoke('add', '--git', remote, '--build', ':', *extra))
+                environment = control.load_environment(result['id'])
+                project = Path(environment['path'])
+                self.assertEqual('ready', environment['status'])
+                self.assertIsNone(environment['commit'])
+                self.assertEqual('feature/new' if extra else 'main', environment['branch'])
+                self.assertEqual('', subprocess.run(['git', '-C', str(project), 'for-each-ref'], capture_output=True, text=True, check=True).stdout)
+                self.invoke('build', result['id'])
+                if not extra:
+                    with self.assertRaisesRegex(ValueError, 'empty.example.test already exists'):
+                        self.invoke('add', '--git', remote, '--build', ':')
+
+    def test_invalid_head_in_nonempty_repository_is_not_treated_as_empty(self):
+        self.run.side_effect = [RuntimeError('invalid HEAD'), 'refs/heads/main\n']
+        with self.assertRaisesRegex(RuntimeError, 'invalid HEAD'):
+            control.head_commit(control.PROJECTS)
+
     def test_phpmyadmin_clone_only_downloads_the_selected_branch_tip(self):
+        self.run.side_effect = lambda arguments, **kwargs: 'abc\trefs/heads/STABLE\n' if arguments[:2] == ['git', 'ls-remote'] else ''
         for number, repository in enumerate(('https://github.com/phpmyadmin/phpmyadmin.git',
                                              'git@github.com:phpmyadmin/phpmyadmin.git')):
             with self.subTest(repository=repository):
@@ -128,6 +218,25 @@ class EnvironmentSetupTest(unittest.TestCase):
         control.reconcile(self.settings, {self.identity: value})
         self.assertEqual('ready', control.load_environment(self.identity)['status'])
         self.assertEqual('built', (project / 'build-result.txt').read_text())
+
+    @unittest.skipUnless(os.geteuid() == 0, 'Changing project ownership requires root, as in the container.')
+    def test_owned_projects_keep_container_root_ownership_before_and_after_build(self):
+        def run_file_commands(arguments, **kwargs):
+            if arguments[0] == 'chown':
+                subprocess.run(arguments, check=True)
+            return ''
+
+        self.run.side_effect = run_file_commands
+        self.vhost.side_effect = lambda environment: self.assertEqual(
+            (0, 0), (Path(environment['path']).stat().st_uid, Path(environment['path']).stat().st_gid))
+        for extra in (['--subdomain', 'manual'], ['--dynamic']):
+            with self.subTest(extra=extra):
+                result = json.loads(self.invoke('add', *extra, '--build', 'mkdir -p assets && printf built > assets/result.txt'))
+                if '--subdomain' in extra:
+                    self.invoke('build', result['id'])
+                project = Path(result['path'])
+                for path in (project, project / 'assets', project / 'assets/result.txt', Path(result['data_path'])):
+                    self.assertEqual((0, 0), (path.stat().st_uid, path.stat().st_gid))
 
     def test_build_arguments_reach_the_build_as_positional_parameters(self):
         project = control.PROJECTS / 'manual'
@@ -756,11 +865,12 @@ class EnvironmentSetupTest(unittest.TestCase):
                  patch.object(control, 'read_desired', side_effect=AssertionError('exec must not reconcile')), \
                  self.assertRaises(SystemExit):
                 self.invoke('exec', *arguments, 'printf "%s" "$LAMP_ID" && false')
-            change_directory.assert_called_once_with(child)
+            change_directory.assert_called_once_with(Path(arguments[1]) if arguments[0] == '--directory' else child)
             shell, command = execute.call_args.args
             self.assertEqual('bash', shell)
             self.assertEqual(['bash', '-c'], command[:2])
             self.assertIn(environment['setup_environment'], command[2])
+            self.assertIn('nvm use --silent', command[2])
             self.assertTrue(command[2].endswith('printf "%s" "$LAMP_ID" && false'))
 
     def test_exec_creates_web_readable_files_without_exposing_setup_or_logs(self):
@@ -782,7 +892,8 @@ class EnvironmentSetupTest(unittest.TestCase):
             for inherited_umask in (0o022, 0o077):
                 with self.subTest(selection=selection, inherited_umask=inherited_umask):
                     os.umask(inherited_umask)
-                    directory = project / f'assets-{len(list(project.glob("assets-*")))}'
+                    folder = Path(selection[1]) if selection[0] == '--directory' else project
+                    directory = folder / f'assets-{len(list(folder.glob("assets-*")))}'
                     script = f'mkdir {directory.name} && printf bundle > {directory.name}/bundle.js'
                     with patch.object(control.os, 'execvp', side_effect=execute), self.assertRaises(SystemExit):
                         self.invoke('exec', *selection, script)
@@ -793,15 +904,46 @@ class EnvironmentSetupTest(unittest.TestCase):
 
     def test_exec_outside_registered_projects_keeps_generic_container_shell(self):
         (control.PROJECTS / 'project').mkdir()
+        folder = control.PROJECTS / 'project-other'
+        folder.mkdir()
         self.invoke('add', '--subdomain', 'project')
         os.umask(0o022)
         with patch.object(control.os, 'chdir') as change_directory, \
              patch.object(control.os, 'execvp', side_effect=SystemExit(0)) as execute, \
              self.assertRaises(SystemExit):
-            self.invoke('exec', '--directory', str(control.PROJECTS / 'project-other'), 'exit 7')
-        change_directory.assert_not_called()
-        execute.assert_called_once_with('bash', ['bash', '-lc', 'exit 7'])
+            self.invoke('exec', '--directory', str(folder), 'exit 7')
+        change_directory.assert_called_once_with(folder)
+        shell, command = execute.call_args.args
+        self.assertEqual('bash', shell)
+        self.assertEqual(['bash', '-lc'], command[:2])
+        self.assertIn('nvm use --silent', command[2])
+        self.assertTrue(command[2].endswith('exit 7'))
         self.assertEqual(0o022, os.umask(0o022))
+
+    def test_exec_selects_node_before_command_and_stops_on_missing_version(self):
+        project = control.PROJECTS / 'project'
+        project.mkdir()
+        self.invoke('add', '--subdomain', 'project')
+        outside = control.PROJECTS / 'outside'
+        outside.mkdir()
+        (Path(os.environ['NVM_DIR']) / 'nvm.sh').write_text(
+            'nvm_find_nvmrc() { printf "%s" "$PWD/.nvmrc"; }\n'
+            'nvm() { [[ $(cat .nvmrc) != missing ]] || return 127; export SELECTED_NODE=$(cat .nvmrc); }\n'
+        )
+        self.addCleanup(os.chdir, os.getcwd())
+
+        def execute(shell, command):
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual('26.11.1' if version == '26.11.1' else '', result.stdout)
+            raise SystemExit(result.returncode)
+
+        for folder in (project, outside):
+            for version in ('26.11.1', 'missing'):
+                with self.subTest(folder=folder, version=version):
+                    (folder / '.nvmrc').write_text(version)
+                    with patch.object(control.os, 'execvp', side_effect=execute), self.assertRaises(SystemExit) as raised:
+                        self.invoke('exec', '--directory', str(folder), 'printf "%s" "$SELECTED_NODE"')
+                    self.assertEqual(0 if version == '26.11.1' else 127, raised.exception.code)
 
     def test_exec_rejects_unready_or_ambiguous_environment_without_running_command(self):
         project = control.PROJECTS / 'project'

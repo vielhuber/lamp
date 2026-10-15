@@ -59,7 +59,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary><strong>start</strong></summary>
 
-- `./lamp add --git git@github.com:<owner>/<project>.git --subdomain project`
+- `./lamp add --git git@github.com:<owner>/<project>.git`
 - open `https://project.<domain>`
 
 </details>
@@ -330,7 +330,12 @@ Publish image changes through the GitHub workflow before pulling; updating the c
 | `build`         | omitted         | inline build; omitted uses `.data/build/<host>-<owner>-<repo>.sh` if present; `':'` for no-op                 |
 
 - project path: `/var/www/<directory or first subdomain>` for static environments, `/var/www/_environments/<id>` for dynamic ones; the same path on host and container
+- `lamp add --git git@github.com:owner/project.git` derives the static subdomain `project` and directory `/var/www/project`. Repository names keep their case in the directory; subdomains are lowercased and non-DNS characters become hyphens. Explicit `--subdomain` and `--directory` keep their existing meaning; existing YAML entries are unchanged.
+- Adding an existing static environment fails without changing it. Use `lamp show <id|subdomain>` to inspect it; explicit `add --id` calls remain idempotent.
+- Use `lamp add --dynamic --git ...` for an isolated environment with a generated hostname and directory. Existing `add --id ...` calls without a subdomain remain dynamic for compatibility with Charly. `--dynamic` cannot be combined with static subdomains or directories.
+- Empty Git repositories are supported without creating an initial commit. An explicit branch becomes the unborn branch; commit metadata stays null until the first commit exists. Initial worktree restoration only applies when the clone already has a commit.
 - existing directories are adopted without clone, pull, checkout, chown or build; missing static directories are cloned without building
+- LAMP-created projects and their data stay owned by container root during provisioning and builds, preserving the host-user mapping of idmapped project mounts. Adopted projects keep their existing ownership.
 - `remove` deletes the project directory only for dynamic environments; static directories always stay
 - databases: a static environment gets exactly one fixed database `db_name` on `db_engine`, created when missing and never dropped or altered by lamp, reachable as `root` (mysql) or `postgres` (postgres) with the password from `/var/lib/lamp/secrets/database-password`; a `sqlite` database is the file `/var/lib/lamp/environments/<id>/data/<db_name>.sqlite`; dynamic environments get isolated `lamp_<id>` databases on mysql and postgresql with their own account, dropped on `remove`
 - mysql and postgresql are published on `127.0.0.1:3306` and `127.0.0.1:5432` of the host for database tools; the old host services must be stopped
@@ -512,7 +517,8 @@ Publish image changes through the GitHub workflow before pulling; updating the c
 
 - `lamp status --json` / `lamp version --json` return `root`, `state`, `healthy`, `api` (cli contract number, currently `1`)
 - `lamp add --id <id> --git <url> --branch <b> --base-branch main` creates or returns the environment; missing remote branches start from `--base-branch`
-- `lamp exec [<id|subdomain>] "npm test"` runs the command in the checkout with the right php and database variables. Without an id, it selects the environment containing the current directory (including subfolders); the closest project root wins. Ambiguous matches require an explicit id or subdomain. Outside registered projects, it keeps the general container shell.
+- `lamp exec [<id|subdomain>] "npm test"` runs the command in the checkout with the right php and database variables. Without an id, it selects the environment containing the current directory and keeps that directory, including subfolders; the closest project root wins. Ambiguous matches require an explicit id or subdomain. Outside registered projects, it runs the general container shell in the requested directory, which must exist in the container.
+- Before executing the command, `lamp exec` selects the installed Node version from the nearest `.nvmrc` in the working directory or its parents. Without `.nvmrc`, the container default stays active; a missing requested version stops execution.
 - `lamp branch <id> <branch> --base main` switches without rebuild; dirty checkouts are refused, ignored files are never overwritten
 - `lamp build <id>` reruns the project build on demand; `lamp list --search <term>` finds environments by any value
 - `add`, `build`, `remove` and `reset` of different environments run side by side: clone, import and build of one environment hold no shared lock, only state, vhost, databases and cloudflare changes are serialized; two commands for the same environment wait for each other; `start`, `restart`, `stop` wait until running environment work has finished

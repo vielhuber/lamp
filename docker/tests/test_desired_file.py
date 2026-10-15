@@ -125,7 +125,7 @@ class DesiredFileTest(unittest.TestCase):
     def test_reconcile_leaves_dynamic_environments_alone_even_when_their_build_changes(self):
         control.write_desired([], None)
         (control.CONFIGURATION / 'build').mkdir()
-        dynamic = self.invoke('add', '--git', 'git@example.test:owner/project.git')
+        dynamic = self.invoke('add', '--dynamic', '--git', 'git@example.test:owner/project.git')
         (control.CONFIGURATION / 'build' / 'example.test-owner-project.sh').write_text('composer install\n')
         shutil.rmtree(control.PROJECTS / '_environments' / dynamic['id'])
         with patch.object(control, 'add', side_effect=AssertionError('dynamic environments must not be re-applied')), \
@@ -167,7 +167,9 @@ class DesiredFileTest(unittest.TestCase):
         control.write_desired([control.validate_specification({'subdomain': 'site', 'php': '8.3'})], None)
         first = self.invoke('add', '--subdomain', 'site', '--php', '8.3')
         self.assertEqual(1, len(control.read_desired()[0]))
-        self.assertEqual(first['id'], self.invoke('add', '--subdomain', 'site', '--php', '8.3')['id'])
+        with self.assertRaisesRegex(ValueError, 'site.example.test already exists'):
+            self.invoke('add', '--subdomain', 'site', '--php', '8.3')
+        self.assertEqual(first['id'], self.invoke('add', '--id', first['id'], '--subdomain', 'site', '--php', '8.3')['id'])
         with patch.object(control, 'remove') as remove, patch.object(control, 'add') as add:
             self.reconcile()
         remove.assert_not_called()

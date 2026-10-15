@@ -605,6 +605,15 @@ def desired_state(entries, current=None):
     return desired
 
 
+def head_commit(project):
+    try:
+        return run(["git", "rev-parse", "HEAD"], cwd=project, capture=True).strip() or None
+    except RuntimeError:
+        if run(["git", "for-each-ref", "--format=%(refname)"], cwd=project, capture=True).strip():
+            raise
+        return None
+
+
 def check_checkout(environment, desired):
     project = environment_project(environment)
     if project != project_path(environment["id"], desired):
@@ -621,7 +630,7 @@ def check_checkout(environment, desired):
     if environment.get("status") == "failed" and not any(project.iterdir()):
         return
     dirty = run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=project, capture=True)
-    unpublished = run(["git", "rev-list", "--max-count=1", "HEAD", "--branches", "--not", "--remotes"], cwd=project, capture=True)
+    unpublished = run(["git", "rev-list", "--max-count=1", "HEAD", "--branches", "--not", "--remotes"], cwd=project, capture=True) if head_commit(project) else ""
     if dirty or unpublished:
         raise ValueError(f"Environment {environment['id']} has local changes or unpublished commits; preserve them before changing git/branch.")
 
@@ -1296,9 +1305,11 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
                                                                  "git@github.com:phpmyadmin/phpmyadmin"):
                 clone += ["--depth", "1", "--single-branch", "--no-tags"]
             branch = arguments.branch
-            if branch and getattr(arguments, "base_branch", None):
-                found = run(["git", "ls-remote", "--heads", arguments.git, "refs/heads/" + branch], environment=git_environment, capture=True)
-                if not found.strip():
+            if branch:
+                refs = run(["git", "ls-remote", "--heads", "--tags", arguments.git], environment=git_environment, capture=True)
+                if not refs.strip():
+                    branch = None
+                elif getattr(arguments, "base_branch", None) and not any(line.endswith("\trefs/heads/" + branch) for line in refs.splitlines()):
                     branch = arguments.base_branch
             if branch:
                 clone += ["--branch", branch]
@@ -1309,7 +1320,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
             if current is None and not subdomain_labels(desired) and getattr(arguments, "restore_worktree_after_build", False):
                 if run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=project, capture=True).strip():
                     raise ValueError("Cannot enable worktree restoration: the initial clone is not clean.")
-                restore_commit = run(["git", "rev-parse", "HEAD"], cwd=project, capture=True).strip()
+                restore_commit = head_commit(project)
         elif project_owned and arguments.git and checkout and any(checkout[key] != desired[key] for key in ("git", "branch")):
             branch = arguments.branch
             if branch is None:
@@ -1326,7 +1337,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
             run(["git", "update-ref", "refs/remotes/origin/" + branch, "HEAD"], cwd=project)
             run(["git", "branch", "--set-upstream-to=origin/" + branch, branch], cwd=project)
         environment["branch"] = run(["git", "branch", "--show-current"], cwd=project, capture=True).strip() if project_owned and arguments.git else desired["branch"]
-        environment["commit"] = run(["git", "rev-parse", "HEAD"], cwd=project, capture=True).strip() if project_owned and arguments.git else None
+        environment["commit"] = head_commit(project) if project_owned and arguments.git else None
         environment["checkout"] = {key: desired[key] for key in ("git", "branch")}
         environment["php"] = resolve_php(project, desired["php"])
         save_environment(environment)
@@ -1346,7 +1357,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
                 environment["document_root"] = str(document_root)
                 save_environment(environment)
                 if project_owned:
-                    run(["chown", "-R", "www-data:www-data", str(project), str(directory / "data")])
+                    run(["chown", "-R", "root:root", str(project), str(directory / "data")])
                 (directory / "data").chmod(0o755)
                 directory.chmod(0o711)
                 vhost(environment)
@@ -1402,7 +1413,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
             raise ValueError("webroot must exist after the build and resolve to a directory inside the project.")
         environment["document_root"] = str(document_root)
         if project_owned:
-            run(["chown", "-R", "www-data:www-data", str(project), str(directory / "data")])
+            run(["chown", "-R", "root:root", str(project), str(directory / "data")])
         (directory / "data").chmod(0o755)
         directory.chmod(0o711)
         for path in directory.iterdir():
@@ -1495,6 +1506,7 @@ def main():
     create.add_argument("--restore-worktree-after-build", action="store_true")
     create.add_argument("--subdomain")
     create.add_argument("--directory")
+    create.add_argument("--dynamic", action="store_true")
     create.add_argument("--db-name", dest="db_name")
     create.add_argument("--db-engine", dest="db_engine", choices=DATABASE_ENGINES)
     create.add_argument("--alias", dest="aliases", action="append")
@@ -1512,16 +1524,19 @@ def main():
         raise ValueError("Run the controller through lamp on the Docker host.")
     previous_umask = os.umask(0o077)
     if arguments.command == "exec":
+        runtime = ('source "${NVM_DIR:-/root/.nvm}/nvm.sh" --no-use\n'
+                   'if [[ -n $(nvm_find_nvmrc) ]]; then nvm use --silent; fi\n')
         environment = environment_by_directory(arguments.directory) if arguments.directory is not None else load_environment(arguments.id)
         if environment is None:
+            os.chdir(arguments.directory)
             os.umask(previous_umask)
-            os.execvp("bash", ["bash", "-lc", arguments.script])
+            os.execvp("bash", ["bash", "-lc", "set -e\n" + runtime + arguments.script])
         if environment["status"] != "ready":
             raise ValueError("Environment is not ready.")
-        os.chdir(environment_project(environment))
+        os.chdir(arguments.directory or environment_project(environment))
         setup = environment.get("setup_environment")
         os.umask(0o022)
-        os.execvp("bash", ["bash", "-c", "set -e\n" + ("source " + shlex.quote(setup) + "\n" if setup else "") + arguments.script])
+        os.execvp("bash", ["bash", "-c", "set -e\n" + ("source " + shlex.quote(setup) + "\n" if setup else "") + runtime + arguments.script])
     if arguments.command == "syncdb":
         # The parent build already holds control.lock while this child performs the import.
         environment = load_environment(os.environ.get("LAMP_ID"))
@@ -1635,6 +1650,7 @@ def main():
                 raise ValueError("Configured environments require the tunnel credentials; run lamp cloudflare-setup.")
             return
         if arguments.command == "branch":
+            os.umask(0o022)
             environment = load_environment(arguments.id)
             if environment["status"] != "ready":
                 raise ValueError("Environment is not ready.")
@@ -1705,6 +1721,14 @@ def main():
             reconcile(settings, desired)
             return
         elif arguments.command == "add":
+            if arguments.dynamic and (arguments.subdomain is not None or arguments.directory is not None):
+                raise ValueError("--dynamic cannot be combined with --subdomain or --directory.")
+            if arguments.git and not arguments.dynamic and not arguments.id and arguments.subdomain is None:
+                build_script(arguments.git)
+                name = arguments.git.rstrip("/").removesuffix(".git").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+                arguments.subdomain = re.sub(r"[^a-z0-9-]", "-", name.lower()).strip("-")
+                if arguments.directory is None:
+                    arguments.directory = name
             identity = arguments.id or uuid.uuid4().hex[:12]
             if arguments.base_branch:
                 run(["git", "check-ref-format", "--branch", arguments.base_branch])
@@ -1712,6 +1736,8 @@ def main():
             if arguments.id and (STATE / "environments" / identity / "environment.json").is_file():
                 existing = load_environment(identity)
                 applied = specification(existing)
+                if arguments.dynamic and subdomain_labels(applied):
+                    raise ValueError("Existing environment is static; --dynamic cannot change its type.")
                 if any(applied.get(key) != requested[key]
                        for key in ("git", *ENVIRONMENT_DEFAULTS) if getattr(arguments, key) is not None):
                     raise ValueError("Environment ID already exists with different settings.")
@@ -1729,8 +1755,7 @@ def main():
                 if (STATE / "environments" / listed / "environment.json").is_file():
                     existing = load_environment(listed)
                     if existing["status"] == "ready":
-                        print(json.dumps(show(existing), indent=4))
-                        return
+                        raise ValueError(f"Environment {existing['hostname']} already exists; use lamp show {listed} to inspect it.")
                     raise ValueError("This environment is listed and exists but is not ready; restart to retry, or remove it.")
                 desired.pop(listed)
                 identity = arguments.id or listed
