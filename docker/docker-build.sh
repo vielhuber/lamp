@@ -626,7 +626,7 @@ apt-get install -y speedtest
 step 'harnesses'
 curl -fsSL https://claude.ai/install.sh -o claude-install.sh
 bash claude-install.sh
-curl -fsSL https://opencode.ai/install -o opencode-install.sh
+curl -fsSL https://opencode.ai/v2/install -o opencode-install.sh
 bash opencode-install.sh
 curl --compressed -fsSL https://antigravity.google/cli/install.sh -o antigravity-install.sh
 bash antigravity-install.sh
