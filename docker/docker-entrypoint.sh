@@ -32,6 +32,7 @@ if [[ "$(id -u)" -eq 0 ]]; then
 fi
 mkdir -p /install/docker/scripts
 mv -f "$temporary_directory/lamp" /install/lamp
+if [[ ! -e /install/lamp.sh && ! -L /install/lamp.sh ]]; then ln -s lamp /install/lamp.sh; fi
 mv -f "$temporary_directory/docker/docker-compose.yml" "$temporary_directory/docker/docker-compose.data.yml" /install/docker/
 mv -f "$temporary_directory/docker/scripts/vscode.py" /install/docker/scripts/
 rm -rf "$temporary_directory"

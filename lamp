@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOYMENT_SCRIPT_VERSION=3
+DEPLOYMENT_SCRIPT_VERSION=4
 directory=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
-if [[ ! -e "$directory/.git" && "${LAMP_DEPLOYMENT_REFRESHED:-0}" != 1 && "${1:-}" != presets ]] \
+if [[ ! -e "$directory/.git" && "${LAMP_DEPLOYMENT_REFRESHED:-0}" != 1 && "${1:-}" != presets && "${1:-}" != version ]] \
     && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
     && docker image inspect ghcr.io/vielhuber/lamp:latest >/dev/null 2>&1; then
     if deployment_container=$(docker create ghcr.io/vielhuber/lamp:latest) && [[ -n "$deployment_container" ]]; then
@@ -28,6 +28,7 @@ if [[ ! -e "$directory/.git" && "${LAMP_DEPLOYMENT_REFRESHED:-0}" != 1 && "${1:-
                         for deployment_file in "${deployment_files[@]}"; do
                             mv -f -- "$deployment_directory/$deployment_file" "$directory/$deployment_file"
                         done
+                        if [[ ! -e "$directory/lamp.sh" && ! -L "$directory/lamp.sh" ]]; then ln -s lamp "$directory/lamp.sh"; fi
                     fi
                 else
                     printf '%s\n' '⚠️ Could not refresh the LAMP host files; keeping the current installation.' >&2
@@ -650,15 +651,29 @@ if [[ -f "$directory/docker/docker-compose.override.yml" ]]; then
     compose+=(-f "$directory/docker/docker-compose.override.yml")
 fi
 if [[ "$command" = status || "$command" = version ]]; then
+    if ! container_id=$("${compose[@]}" ps --all --quiet app); then
+        printf '❌ Container information unavailable: Docker/Compose query failed.\n' >&2
+        exit 1
+    fi
+    image_version= image= image_id=
+    if [[ "$command" = version && -n "$container_id" ]]; then
+        image_version=$(docker inspect --type container --format '{{if eq (index .Config.Labels "org.opencontainers.image.source") "https://github.com/vielhuber/lamp"}}{{index .Config.Labels "org.opencontainers.image.version"}}{{end}}' "$container_id")
+        if [[ -z "$image_version" ]]; then image_version='unknown (image has no LAMP release metadata)'; fi
+        image=$(docker inspect --type container --format '{{.Config.Image}}' "$container_id")
+        image_id=$(docker inspect --type container --format '{{.Image}}' "$container_id")
+    fi
     if $json; then
-        container_id=$("${compose[@]}" ps --all --quiet app)
         state=missing
         health=unknown
         if [[ -n "$container_id" ]]; then
             state=$(docker inspect --format '{{.State.Status}}' "$container_id")
             health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' "$container_id")
         fi
-        python3 -c 'import json,sys; print(json.dumps(dict(root=sys.argv[1],state=sys.argv[2],healthy=sys.argv[3]=="healthy",api=1)))' "$directory" "$state" "$health"
+        python3 -c 'import json,sys
+data = dict(root=sys.argv[1], state=sys.argv[2], healthy=sys.argv[3]=="healthy", api=1)
+if sys.argv[4] == "version":
+    data.update(version=sys.argv[5] or None, image=sys.argv[6] or None, image_id=sys.argv[7] or None)
+print(json.dumps(data))' "$directory" "$state" "$health" "$command" "$image_version" "$image" "$image_id"
         exit 0
     fi
     printf 'LAMP\nCheckout: %s\n' "$directory"
@@ -666,17 +681,13 @@ if [[ "$command" = status || "$command" = version ]]; then
         revision=$(git -C "$directory" describe --tags --always --dirty 2>/dev/null) || revision='unknown (Git metadata unavailable)'
         printf 'Source version: %s\n' "$revision"
     fi
-    if ! container_id=$("${compose[@]}" ps --all --quiet app); then
-        printf '❌ Container information unavailable: Docker/Compose query failed.\n' >&2
-        exit 1
-    fi
     if [[ -z "$container_id" ]]; then
         printf 'Container: not created\n'
         if [[ "$command" = version ]]; then printf 'Container image: unavailable (no container)\n'; fi
         exit 0
     fi
     if [[ "$command" = version ]]; then
-        docker inspect --type container --format 'Container image: {{.Image}}' "$container_id"
+        printf 'Image version: %s\nImage: %s\nContainer image: %s\n' "$image_version" "$image" "$image_id"
         exit 0
     fi
     "${compose[@]}" ps --all app
@@ -759,7 +770,10 @@ if [[ "$command" != docker-reset && -z "$data_repository" ]]; then
     chmod 700 "$directory/.data" "$directory/.data/ssh" "$directory/.data/syncdb" "$directory/.data/build"
 fi
 case "$command" in
-    docker-build) "${compose[@]}" build --no-cache ;;
+    docker-build)
+        revision=$(git -C "$directory" describe --tags --always --dirty 2>/dev/null) || revision=unknown
+        "${compose[@]}" build --build-arg "APP_VERSION=$revision" --no-cache
+        ;;
     docker-reset) "${compose[@]}" down --volumes --rmi all --remove-orphans ;;
     start|restart)
         if [[ "$command" = restart && "$container_state" = running ]]; then

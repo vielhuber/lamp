@@ -65,3 +65,5 @@ jobs:
                   file: docker/Dockerfile
                   push: true
                   tags: ghcr.io/vielhuber/lamp:latest
+                  build-args: |
+                      APP_VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}

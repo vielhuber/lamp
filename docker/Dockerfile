@@ -46,5 +46,9 @@ ENV PATH="/root/.local/bin:/root/.cargo/bin:/root/.opencode/bin:/root/.syncdb/ve
 # Disabled together with the CUDA installation in docker-build.sh.
 # ENV PATH="/usr/local/cuda/bin:${PATH}" NVCC_CCBIN=/usr/bin/g++-14
 
+ARG APP_VERSION=unknown
+LABEL org.opencontainers.image.source="https://github.com/vielhuber/lamp" \
+    org.opencontainers.image.version="$APP_VERSION"
+
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["/app/docker-start.sh"]
