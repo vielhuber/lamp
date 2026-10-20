@@ -715,20 +715,33 @@ def cloudflare_request(method, resource, payload=None):
     account = json.loads((STATE / "cloudflare" / "cloudflared-credentials.json").read_text()).get("AccountTag")
     if not isinstance(account, str) or not re.fullmatch(r"[a-f0-9]{32}", account):
         raise ValueError("Invalid cloudflared-credentials.json; run lamp cloudflare-setup.")
-    connection = http.client.HTTPSConnection("api.cloudflare.com", timeout=20)
-    try:
-        connection.request(method, "/client/v4/accounts/" + account + "/access/apps" + resource,
-                           body=json.dumps(payload) if payload is not None else None,
-                           headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
-        response = connection.getresponse()
-        result = json.loads(response.read())
-        if response.status >= 300 or not result.get("success"):
-            raise RuntimeError(f"Cloudflare Access API failed (HTTP {response.status}); response withheld to protect credentials.")
-        return result
-    except (OSError, http.client.HTTPException, ValueError) as error:
-        raise RuntimeError(f"Cloudflare Access API connection or response failed ({type(error).__name__}); check token, permissions and connectivity.") from None
-    finally:
-        connection.close()
+    for attempt in range(3):
+        connection = http.client.HTTPSConnection("api.cloudflare.com", timeout=20)
+        try:
+            connection.request(method, "/client/v4/accounts/" + account + "/access/apps" + resource,
+                               body=json.dumps(payload) if payload is not None else None,
+                               headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+            response = connection.getresponse()
+            if response.status >= 300:
+                failure = f"Cloudflare Access API failed (HTTP {response.status}); response withheld to protect credentials."
+                retry = response.status in (408, 429, 500, 502, 503, 504)
+            else:
+                try:
+                    result = json.loads(response.read())
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    raise RuntimeError(f"Cloudflare Access API returned invalid JSON (HTTP {response.status}); response withheld to protect credentials.") from None
+                if not result.get("success"):
+                    raise RuntimeError(f"Cloudflare Access API failed (HTTP {response.status}); response withheld to protect credentials.")
+                return result
+        except (OSError, http.client.HTTPException) as error:
+            failure = f"Cloudflare Access API connection or response failed ({type(error).__name__}); check connectivity."
+            retry = True
+        finally:
+            connection.close()
+        if method != "GET" or not retry or attempt == 2:
+            raise RuntimeError(failure)
+        print(f"⚠️ {failure} Retrying GET ({attempt + 2}/3).", file=sys.stderr)
+        time.sleep(2 ** attempt + secrets.randbelow(1000) / 1000)
 
 
 def access_destinations(application):
