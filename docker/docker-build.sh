@@ -9,6 +9,21 @@ export PIP_DISABLE_PIP_VERSION_CHECK=1
 export NVM_DIR=/root/.nvm
 export PATH="/root/.local/bin:/root/.cargo/bin:/root/.opencode/bin:$PATH"
 php_versions=(5.6 7.0 7.1 7.2 7.3 7.4 8.0 8.1 8.2 8.3 8.4 8.5)
+# Older branches contain Sury backports of CVE-2026-109618 and CVE-2026-109619.
+declare -A php_security_minimum_versions=(
+    [5.6]=5.6.40-104
+    [7.0]=7.0.33-92
+    [7.1]=7.1.33-80
+    [7.2]=7.2.34-66
+    [7.3]=7.3.33-35
+    [7.4]=1:7.4.33-31
+    [8.0]=1:8.0.30-25
+    [8.1]=8.1.34-9
+    [8.2]=8.2.35
+    [8.3]=8.3.36
+    [8.4]=8.4.27
+    [8.5]=8.5.12
+)
 build_directory=$(mktemp -d /tmp/lamp-build.XXXXXXXX)
 cd "$build_directory"
 # Third-party download servers fail sporadically (HTTP 5xx, resets); retry every curl of this build, and only of this build.
@@ -143,6 +158,14 @@ for version in "${php_versions[@]}"; do
         packages+=("php$version-dev")
     fi
     apt-get install -y "${packages[@]}"
+    for package in "php$version-common" "php$version-cli" "php$version-fpm"; do
+        installed_version=$(dpkg-query -W -f='${Version}' "$package")
+        if ! dpkg --compare-versions "$installed_version" ge "${php_security_minimum_versions[$version]}"; then
+            printf '%s %s is vulnerable to CVE-2026-109618/CVE-2026-109619; require >= %s\n' \
+                "$package" "$installed_version" "${php_security_minimum_versions[$version]}" >&2
+            exit 1
+        fi
+    done
 done
 # PHP 8.5 includes OPcache; php8.5-uopz is supplied by Ubuntu's universe repository.
 # Sury has no uopz binaries for PHP 8.0–8.4 on resolute; compile the upstream extension.
