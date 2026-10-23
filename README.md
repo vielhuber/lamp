@@ -68,12 +68,8 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 
 <summary><strong>update</strong></summary>
 
-Image builds require the fixes for [CVE-2026-109618 and CVE-2026-109619](https://www.php.net/archive/2026.php#2026-10-21-5): PHP 8.5.12, 8.4.27, 8.3.36, 8.2.35 or newer, and patched Sury package revisions for older branches. CLI, FPM and common packages are checked during the build.
-
-Push the changes, then publish a release tag or run the CI workflow manually for that branch; a normal branch push does not publish an image. Wait for the image build to succeed before updating:
-
-- `docker pull ghcr.io/vielhuber/lamp:latest`
 - `./lamp stop`
+- `docker pull ghcr.io/vielhuber/lamp:latest`
 - `./lamp start`
 
 </details>
