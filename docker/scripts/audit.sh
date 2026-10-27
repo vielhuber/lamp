@@ -3,15 +3,19 @@ set -uo pipefail
 shopt -s nullglob dotglob
 check_npm_vulnerabilities=true
 declare -A ignored=()
+declare -A included=()
 while (( $# )); do
     case "$1" in
         --no-npm-vulnerabilities) check_npm_vulnerabilities=false; shift ;;
-        --exclude)
+        --include|--exclude)
             if (( $# < 2 )) || [[ -z "$2" || "$2" = --* ]]; then
-                printf '❌ --exclude requires a folder name.\n' >&2
+                printf '❌ %s requires a folder name.\n' "$1" >&2
                 exit 2
             fi
-            ignored["$2"]=1
+            case "$1" in
+                --include) included["$2"]=1 ;;
+                --exclude) ignored["$2"]=1 ;;
+            esac
             shift 2
             ;;
         *) printf '❌ Unknown audit option: %s\n' "$1" >&2; exit 2 ;;
@@ -19,6 +23,10 @@ while (( $# )); do
 done
 if [[ -t 1 && "${TERM:-dumb}" != dumb ]]; then clear; fi
 cd /var/www || exit 1
+
+audit_included_folder() {
+    (( ${#included[@]} == 0 )) || [[ -v included["$1"] && ! -v ignored["$1"] ]]
+}
 
 audit_git_repository() {
     [[ -e "$1/.git" ]] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1
@@ -59,6 +67,7 @@ if organizations=$(gh org list --limit 10000) && repositories=$(while IFS= read 
 done <<< "$(printf '%s\n' vielhuber "$organizations" | sort -u)" | sort -u); then
     declare -A local_repositories=()
     for directory in */; do
+        audit_included_folder "${directory%/}" || continue
         audit_git_repository "$directory" || continue
         remote=$(git -C "$directory" remote get-url origin 2>/dev/null) || continue
         [[ -n "$remote" ]] || continue
@@ -67,6 +76,7 @@ done <<< "$(printf '%s\n' vielhuber "$organizations" | sort -u)" | sort -u); the
     missing=0
     while read -r name url; do
         [[ -z "$name" || "$name" = setup || "$name" = vielhuber ]] && continue
+        audit_included_folder "$name" || continue
         if [[ ! -v local_repositories["$(audit_repository_identity "$url")"] ]]; then
             [[ "$missing" -eq 0 ]] && printf '\n🔎 GitHub repositories missing locally\n\n'
             printf '⛔ %s [not cloned]\n' "$name"
@@ -81,6 +91,7 @@ fi
 missing=0
 for d in */; do
     [[ "$d" = .git/ || "$d" = _environments/ || -v ignored["${d%/}"] ]] && continue
+    audit_included_folder "${d%/}" || continue
     if ! audit_git_repository "$d"; then
         [[ "$missing" -eq 0 ]] && printf '\n🔎 Folders without a Git repository\n\n'
         printf '⛔ %s [no git]\n' "${d%/}"
@@ -106,6 +117,7 @@ up_to_date=0
 for d in ./*/; do
     n=$(basename "$d")
     [[ "$n" = _archive || -v ignored["$n"] ]] && continue
+    audit_included_folder "$n" || continue
     audit_own_repository "$d" || continue
     projects=$((projects+1))
     [[ ${#n} -gt $max ]] && max=${#n}
@@ -117,6 +129,7 @@ audit_log=/tmp/lamp-audit.log
 for d in ./*/; do
     n=$(basename "$d")
     [[ "$n" = _archive || -v ignored["$n"] ]] && continue
+    audit_included_folder "$n" || continue
     audit_own_repository "$d" || continue
     lamp_ok=0
     if [[ "$lamp_read" -eq 0 ]]; then
@@ -168,6 +181,7 @@ for d in ./*/; do
     fi
     [[ "$a" -gt 0 || "$b" -gt 0 ]] && sync_ok=1
 
+    dependency_details=()
     while IFS= read -r -d '' manifest; do
         directory=${manifest%/*}
         case "$manifest" in
@@ -179,10 +193,15 @@ for d in ./*/; do
                     security=$(cd "$directory" && npm audit --json "${npm_audit_options[@]}" --fetch-timeout=10000 --fetch-retries=2 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=2000 2>"$audit_log.stderr") || npm_audit_result=$?
                     if [[ "$npm_audit_result" -le 1 ]] && vulnerabilities=$(jq -er '.metadata.vulnerabilities.total | select(type == "number" and . >= 0 and floor == .)' <<< "$security" 2>/dev/null); then
                         npm_vulnerabilities=$((npm_vulnerabilities + vulnerabilities))
-                        [[ "$npm_audit_result" -ne 0 && "$vulnerabilities" -eq 0 ]] && npm_audit_failed=1
+                        [[ "$vulnerabilities" -gt 0 ]] && dependency_details+=("${manifest#"$d"}: npm vulnerabilities ($vulnerabilities)")
+                        if [[ "$npm_audit_result" -ne 0 && "$vulnerabilities" -eq 0 ]]; then
+                            npm_audit_failed=1
+                            dependency_details+=("${manifest#"$d"}: npm audit failed")
+                        fi
                     else
                         npm_audit_failed=1
                         npm_audit_error=$(jq -r '.error.code // "invalid response"' <<< "$security" 2>/dev/null) || npm_audit_error='invalid response'
+                        dependency_details+=("${manifest#"$d"}: npm audit failed ($npm_audit_error)")
                     fi
                 fi
                 [[ "$n" = vuejs-tutorial ]] && continue
@@ -202,13 +221,20 @@ for d in ./*/; do
                         ($package[0] | (.dependencies // {}) + (.devDependencies // {}) + (.optionalDependencies // {}) + (.peerDependencies // {})) as $dependencies |
                         [to_entries[] | select((.value | major) > ($dependencies[.key] | major))] | length
                     ' <<< "$nout" 2>/dev/null); then
-                    [[ "$major_updates" -gt 0 && "$npm_ok" -eq 0 ]] && npm_ok=1
+                    if [[ "$major_updates" -gt 0 ]]; then
+                        [[ "$npm_ok" -eq 0 ]] && npm_ok=1
+                        dependency_details+=("${manifest#"$d"}: npm major updates")
+                    fi
                 else
                     npm_ok=2
+                    dependency_details+=("${manifest#"$d"}: npm check failed")
                 fi
                 ;;
             */composer.json)
-                (cd "$directory" && php8.5 "$(command -v composer)" outdated -D --strict --major-only >/dev/null 2>&1) || comp_ok=1
+                if ! (cd "$directory" && php8.5 "$(command -v composer)" outdated -D --strict --major-only >/dev/null 2>&1); then
+                    comp_ok=1
+                    dependency_details+=("${manifest#"$d"}: composer major updates or check failed")
+                fi
                 ;;
         esac
     done < <(find "$d" -type d \( -name node_modules -o -name vendor -o -name venv -o -name .venv -o -name _tests -o -name tests -o -name test -o -path '*/gists/gists' -o -name .git -o -name _archive -o -name wp-admin -o -name wp-includes -o -path '*/wp-content/plugins' -o -path '*/wp-content/mu-plugins' -o -path '*/wp-content/uploads' -o -path '*/wp-content/languages' -o \( -path '*/wp-content/themes/*' ! -path "*/wp-content/themes/$n" ! -path "*/wp-content/themes/$n/*" \) \) -prune -o -type f \( -name package.json -o -name composer.json \) -print0)
@@ -243,6 +269,9 @@ for d in ./*/; do
         [[ "$fetch_failed" -eq 1 ]] && m="${m}fetch failed, "
         [[ "$pull_failed" -eq 1 ]] && m="${m}pull failed, "
         printf "⛔ %-${max}s  [%s]\n" "$n" "${m%, }"
+        if (( ${#dependency_details[@]} )); then
+            printf '    ↳ %s\n' "${dependency_details[@]}"
+        fi
     fi
 done
 printf '\n✅ %d projects are up to date.\n\n' "$up_to_date"

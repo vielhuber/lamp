@@ -140,12 +140,64 @@ esac
         self.assertFalse((self.root / 'security-called').exists())
 
     def test_invalid_audit_options_fail_before_checks(self):
-        for arguments in (['--exclude'], ['--exclude', ''], ['--exclude', '--no-npm-vulnerabilities'], ['--unknown']):
+        for arguments in (['--exclude'], ['--exclude', ''], ['--exclude', '--no-npm-vulnerabilities'],
+                          ['--include'], ['--include', ''], ['--include', '--exclude'], ['--unknown']):
             with self.subTest(arguments=arguments):
                 result = subprocess.run(['bash', '-c', self.script, 'audit', *arguments],
                                         env=self.environment, capture_output=True, text=True, timeout=10)
                 self.assertEqual(2, result.returncode)
                 self.assertFalse((self.root / 'git-calls').exists())
+
+    def test_repeated_inclusions_limit_all_project_checks(self):
+        for name in ('foo', 'bar', 'other'):
+            (self.project(name) / 'package.json').write_text('{}')
+        (self.projects / 'unrelated-files').mkdir()
+        self.executable('ncu', 'printf "%s\\n" "$PWD" >> "$TEST_ROOT/npm-calls"; printf "{}"')
+        output = self.invoke('--include', 'foo', '--include', 'bar', '--include', 'foo',
+                             TEST_DIRTY=' M tracked', TEST_REPOSITORIES='unrelated git@github.com:vielhuber/unrelated.git')
+        self.assertIn('Analyzing 2 projects', output)
+        self.assertRegex(output, r'foo\s+\[modified\]')
+        self.assertRegex(output, r'bar\s+\[modified\]')
+        self.assertNotIn('unrelated', output)
+        calls = (self.root / 'git-calls').read_text().splitlines()
+        self.assertIn('foo fetch', calls)
+        self.assertIn('bar fetch', calls)
+        self.assertNotIn('other status', calls)
+        self.assertNotIn('other fetch', calls)
+        self.assertFalse(any(call.startswith('other ') for call in calls))
+        self.assertEqual([str(self.projects / name) for name in ('bar', 'foo')],
+                         (self.root / 'npm-calls').read_text().splitlines())
+
+    def test_exclusions_take_precedence_over_inclusions(self):
+        for name in ('configured', 'excluded', '.selected project'):
+            (self.project(name) / 'package.json').write_text('{}')
+        self.setup.write_text('ignore_from_audit:\n    - configured\n')
+        self.executable('npm', 'touch "$TEST_ROOT/security-called"; printf "{}"')
+        self.executable('ncu', 'printf "{}"')
+        output = self.invoke('--include', 'configured', '--exclude', 'excluded', '--include', 'excluded',
+                             '--include', '.selected project', '--include', 'missing-excluded', '--exclude', 'missing-excluded',
+                             '--no-npm-vulnerabilities', TEST_DIRTY=' M tracked',
+                             TEST_REPOSITORIES='missing-excluded git@github.com:vielhuber/missing-excluded.git')
+        self.assertIn('Analyzing 1 projects', output)
+        self.assertRegex(output, r'\.selected project\s+\[modified\]')
+        self.assertNotIn('configured', output)
+        self.assertNotIn('excluded', output)
+        self.assertFalse((self.root / 'security-called').exists())
+        calls = (self.root / 'git-calls').read_text().splitlines()
+        for name in ('configured', 'excluded'):
+            self.assertNotIn(f'{name} status', calls)
+            self.assertNotIn(f'{name} fetch', calls)
+
+    def test_inclusions_limit_missing_git_and_missing_clone_reports(self):
+        self.project('other')
+        (self.projects / 'plain').mkdir()
+        (self.projects / 'unrelated-files').mkdir()
+        output = self.invoke('--include', 'plain', '--include', 'missing',
+                             TEST_REPOSITORIES='missing git@github.com:vielhuber/missing.git\nunrelated git@github.com:vielhuber/unrelated.git')
+        self.assertIn('plain [no git]', output)
+        self.assertIn('missing [not cloned]', output)
+        self.assertNotIn('unrelated', output)
+        self.assertIn('Analyzing 0 projects', output)
 
     def test_clean_behind_repository_is_pulled_before_dependency_checks(self):
         project = self.project('clean')
@@ -382,6 +434,26 @@ exit 1
         self.assertIn('[npm audit failed (ENOLOCK)]', output)
         self.assertIn('0 projects are up to date.', output)
 
+    def test_nested_dependency_findings_identify_their_manifests(self):
+        project = self.project('project')
+        for folder, manifest in [('editor', 'package.json'), ('bot', 'package.json'), ('legacy', 'composer.json')]:
+            directory = project / folder
+            directory.mkdir()
+            (directory / manifest).write_text('{}')
+        self.executable('npm', '''
+if [[ "$PWD" = */bot ]]; then printf '{"error":{"code":"EALLOWREMOTE"}}';
+else printf '{"metadata":{"vulnerabilities":{"total":68}}}'; fi
+exit 1
+''')
+        self.executable('ncu', 'if [[ "$PWD" = */editor ]]; then exit 1; fi; printf "{}"')
+        self.executable('composer', 'exit 99')
+        self.executable('php8.5', 'exit 1')
+        output = self.invoke()
+        self.assertIn('editor/package.json: npm vulnerabilities (68)', output)
+        self.assertIn('editor/package.json: npm check failed', output)
+        self.assertIn('bot/package.json: npm audit failed (EALLOWREMOTE)', output)
+        self.assertIn('legacy/composer.json: composer', output)
+
     def test_no_npm_vulnerabilities_skips_security_for_all_manifests_but_checks_versions(self):
         project = self.project('project')
         theme = project / 'wp-content/themes/project'
@@ -456,7 +528,9 @@ printf '{}'
         self.executable('docker', 'printf "%s\\n" "$*" >> "$TEST_ROOT/docker-calls"\nif [[ "$1" = image ]]; then exit 1; fi')
         for arguments in ([], ['--no-npm-vulnerabilities'],
                           ['--no-npm-vulnerabilities', '--exclude', 'br-kk', '--exclude', 'hovawartdb'],
-                          ['--exclude', 'br-kk', '--no-npm-vulnerabilities']):
+                          ['--exclude', 'br-kk', '--no-npm-vulnerabilities'],
+                          ['--include', 'foo', '--include', 'bar'],
+                          ['--include', 'foo', '--exclude', 'bar', '--no-npm-vulnerabilities']):
             with self.subTest(arguments=arguments):
                 (self.root / 'docker-calls').write_text('')
                 result = subprocess.run(['bash', str(self.root / 'lamp'), 'audit', *arguments], env=self.environment,
@@ -467,6 +541,13 @@ printf '{}'
                 self.assertEqual(['info', 'image inspect ghcr.io/vielhuber/lamp:latest', 'info'], calls[:3])
                 self.assertTrue(calls[3].endswith('exec -T app bash /opt/lamp/audit.sh' + (' ' + ' '.join(arguments) if arguments else '')))
                 self.assertNotIn('build', calls[3])
+        for arguments in (['--include'], ['--include', ''], ['--include', '--exclude']):
+            with self.subTest(invalid_arguments=arguments):
+                (self.root / 'docker-calls').write_text('')
+                result = subprocess.run(['bash', str(self.root / 'lamp'), 'audit', *arguments], env=self.environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(2, result.returncode, result.stderr)
+                self.assertNotIn('exec', (self.root / 'docker-calls').read_text())
 
 
 if __name__ == '__main__':

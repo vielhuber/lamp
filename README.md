@@ -69,8 +69,10 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 <summary><strong>update</strong></summary>
 
 - `./lamp stop`
-- `docker pull ghcr.io/vielhuber/lamp:latest`
+- `./lamp update`
 - `./lamp start`
+
+`update` requires LAMP to be stopped. It pulls the published image, prepares its container without starting it, and removes unused LAMP images with or without tags. The prepared container protects the new image from pruning; volumes and images used by other containers remain. A failed pull or container preparation aborts before pruning.
 
 </details>
 
@@ -83,6 +85,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `./lamp start`                                                                     | start container, wait for health, apply `.config/env.yaml`                                                                                                                                                                                        |
 | `./lamp add [options]`                                                             | create environment, returns json; all options below are optional; `--subdomain` records a static entry in `.config/env.yaml`, without it the environment is dynamic                                                                               |
 | `./lamp stop`                                                                      | stop container, keep all data                                                                                                                                                                                                                     |
+| `./lamp update`                                                                    | pull the image and remove unused LAMP images while stopped; prepare the container without starting it                                                                                                                                               |
 | `./lamp restart`                                                                   | validate yaml, stop, start, apply                                                                                                                                                                                                                 |
 | `./lamp status [--json]`                                                           | container state, health, ports, supervised services                                                                                                                                                                                               |
 | `./lamp version [--json]`                                                          | active image release, reference and id; host checkout version (`./lamp.sh version` also works)                                                                                                                                                                                                      |
@@ -171,8 +174,8 @@ The complete Git checkout stays local. To test unpublished image changes, stop L
 <summary>update</summary>
 
 - `git pull --ff-only`
-- `docker pull ghcr.io/vielhuber/lamp:latest`
 - `./lamp stop`
+- `./lamp update`
 - `./lamp start`
 
 Publish image changes through the GitHub workflow before pulling; updating the checkout alone does not update the image. The instance configuration, project mounts and named data volumes are kept.
@@ -385,6 +388,8 @@ Publish image changes through the GitHub workflow before pulling; updating the c
 - audit also checks npm security vulnerabilities, npm and Composer major updates, PHP `8.5` and Node `lts/*` version files (including matching WordPress themes), preserving the dependency-folder exclusions. Security checks use `npm audit --json` against each discovered manifest and report the total vulnerabilities. Existing npm lockfiles remain authoritative; without one, npm resolves the dependency tree with `--no-package-lock`, so resolved versions can change between checks. Checks never create lockfiles; failed security checks remain visible with the npm error code. Version checks use `ncu` against `package.json`, including uninstalled development dependencies; neither check installs packages or modifies manifests. `vuejs-tutorial` skips only npm version checks because its lessons intentionally use older dependencies. Failed npm checks remain visible. GitHub/configuration failures remain visible, and failed LAMP checks never count as up to date. It uses the container tools and the GitHub authentication copied from the host on start/restart.
 - `./lamp audit --no-npm-vulnerabilities` skips only the npm security checks for this run. npm version checks through `ncu` and all other audit checks remain active. Without the flag, npm security checks stay enabled by default.
 - `./lamp audit --exclude br-kk --exclude hovawartdb` skips the named folders directly in `/var/www` for this run, in addition to `ignore_from_audit`. Each `--exclude` takes one folder name and can be combined with `--no-npm-vulnerabilities`. Excluded clones still count as present for the GitHub repository comparison.
+- `./lamp audit --include foo --include bar` checks only the named folders directly in `/var/www` for this run, including the missing-Git and missing-clone reports. Each `--include` takes one folder name; repeated names are checked once. Without `--include`, all eligible folders are checked. Configured exclusions and `--exclude` still take precedence, and `--no-npm-vulnerabilities` can be combined with the selection.
+- Dependency findings list their manifest paths relative to each project, including nested builds. Running `npm audit` or `composer audit` only in the project root does not check these nested manifests; the `composer` marker concerns major-version updates or a failed version check.
 - later shells: `./lamp ssh` opens the host's current directory when it exists in the container; otherwise it keeps the container's default directory. With an environment argument it still opens that environment's project directory. To load its variables manually: `source /var/lib/lamp/environments/<id>/setup.env`, `cd "$LAMP_PROJECT_DIR"`
 - from the host, run `lamp code` to open the current folder directly in the running LAMP container. The folder must exist at the same path inside the container. Alternatively, inside `lamp ssh`, run `code .` (or `code /path/to/project`) to open that folder in the host's VS Code attached to the running LAMP container. The host can use a normal Linux user while the container runs as root. The host needs VS Code with `code` in PATH; On first use in the session, Dev Containers is checked silently and installed automatically only if missing. The session forwards folder requests through a private temporary directory in `.config`, without a network listener, and removes it on exit. Existing shells must reconnect once to enable this. The prompt identifies the container as magenta `root@LAMP`.
 - `ncu` uses a 60-second global timeout in interactive shells and in the audit. After changing the shell configuration, run `source ~/.bashrc` in existing sessions.
