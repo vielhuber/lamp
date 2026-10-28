@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOYMENT_SCRIPT_VERSION=5
+DEPLOYMENT_SCRIPT_VERSION=6
 directory=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 if [[ ! -e "$directory/.git" && "${LAMP_DEPLOYMENT_REFRESHED:-0}" != 1 && "${1:-}" != presets && "${1:-}" != version ]] \
     && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
@@ -598,6 +598,9 @@ if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = sta
     chmod 700 "$directory/.logs"
     log_file=$(mktemp "$directory/.logs/$command-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX.log")
     exec 3>&1 4>&2
+    clean_log() {
+        LC_ALL=C sed -u $'s/\033\\[[0-?]*[ -/]*[@-~]//g;s/\r/\\n/g'
+    }
     # start and restart show status lines and Git progress; the complete output goes to the log
     terminal_lines() {
         if [[ "$command" = start || "$command" = restart ]]; then
@@ -606,7 +609,7 @@ if [[ "$command" = docker-build || "$command" = docker-reset || "$command" = sta
             cat
         fi
     }
-    exec > >(LC_ALL=C sed -u $'s/\033\\[[0-?]*[ -/]*[@-~]//g;s/\r/\\n/g' | tee -a "$log_file" | terminal_lines >&3) 2>&1
+    exec > >(clean_log | tee -a "$log_file" | terminal_lines >&3) 2>&1
     log_process=$!
     finish_log() {
         local result=$1 logs_result
@@ -772,8 +775,16 @@ if [[ "$command" != docker-reset && -z "$data_repository" ]]; then
 fi
 case "$command" in
     update)
-        docker pull ghcr.io/vielhuber/lamp:latest
+        printf '📥 Pulling LAMP image; showing download and extraction progress per layer.\n'
+        if [[ -t 3 ]]; then
+            script --quiet --return --command 'docker pull ghcr.io/vielhuber/lamp:latest' /dev/null </dev/null \
+                | tee /dev/fd/3 | clean_log >> "$log_file"
+        else
+            script --quiet --return --command 'docker pull ghcr.io/vielhuber/lamp:latest' /dev/null </dev/null
+        fi
+        printf '🐳 Preparing the stopped container.\n'
         "${compose[@]}" create --no-build --pull never app
+        printf '🧹 Removing unused LAMP images.\n'
         docker image prune -af --filter 'label=org.opencontainers.image.source=https://github.com/vielhuber/lamp'
         printf '✅ LAMP image updated; run lamp start to start it.\n'
         ;;

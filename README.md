@@ -559,7 +559,7 @@ Publish image changes through the GitHub workflow before pulling; updating the c
 
 <summary>logs and debugging</summary>
 
-- `.logs/<command>-<timestamp>-<random>.log` for `docker-build`, `docker-reset`, `start`, `restart` (ansi stripped, exit code included, container output since the start request appended)
+- `.logs/<command>-<timestamp>-<random>.log` for `docker-build`, `docker-reset`, `update`, `start`, `restart` (ansi stripped, exit code included, container output since the start request appended)
 - `start` and `restart` print status lines and live Git clone progress (object transfer, resolving deltas and checkout) on the terminal; other command output is in that log. Static project build scripts do not run. Data repository clones also show progress.
 - `./lamp exec 'supervisorctl status'`; php errors in `/var/log/php-error.log`; xdebug profiles in `/tmp/xdebug` (`?XDEBUG_PROFILE=1` or `XDEBUG_PROFILE=1 php …`)
 - vpn client logs in `/var/log/supervisor/vpn-<name>.log`

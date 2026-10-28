@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import pty
 import subprocess
 import tempfile
 import unittest
@@ -34,6 +35,9 @@ if args[0] == 'info':
 if args[0] == 'compose' and 'ps' in args:
     print(os.environ.get('TEST_STATE', 'exited'))
 elif args[0] == 'pull':
+    if os.environ.get('TEST_PROGRESS'):
+        if not sys.stdout.isatty(): sys.exit(97)
+        print('layer: Downloading 1MB/2MB\\r\\x1b[1Alayer: Downloading 2MB/2MB', flush=True)
     sys.exit(int(os.environ.get('TEST_PULL_EXIT', '0')))
 elif args[0] == 'compose' and 'create' in args:
     result = int(os.environ.get('TEST_CREATE_EXIT', '0'))
@@ -78,7 +82,7 @@ else:
                 self.assertFalse(any(call[0] == 'pull' or 'create' in call or 'prune' in call for call in calls))
 
     def test_failed_pull_or_preparation_never_prunes(self):
-        for variable, code in (('TEST_PULL_EXIT', 7), ('TEST_CREATE_EXIT', 8)):
+        for variable, code in (('TEST_PULL_EXIT', 7), ('TEST_PULL_EXIT', 130), ('TEST_CREATE_EXIT', 8)):
             with self.subTest(variable=variable):
                 self.calls.write_text('')
                 result = self.invoke(**{variable: str(code)})
@@ -90,6 +94,42 @@ else:
 
     def test_prune_failure_is_reported(self):
         self.assertEqual(9, self.invoke(TEST_PRUNE_EXIT='9').returncode)
+
+    def test_pull_progress_survives_redirected_output_and_is_logged_without_ansi(self):
+        result = self.invoke(TEST_PROGRESS='1')
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        log = next((self.root / '.logs').glob('update-*.log')).read_text()
+        for output in (result.stdout, log):
+            self.assertIn('Downloading 1MB/2MB', output)
+            self.assertIn('Downloading 2MB/2MB', output)
+            self.assertNotIn('\x1b', output)
+
+    def test_terminal_keeps_live_progress_while_log_strips_ansi(self):
+        master, slave = pty.openpty()
+        try:
+            with subprocess.Popen(['bash', str(self.root / 'lamp'), 'update'],
+                                  env={**self.environment, 'TEST_PROGRESS': '1'},
+                                  stdin=subprocess.DEVNULL, stdout=slave, stderr=slave) as process:
+                os.close(slave)
+                slave = None
+                output = bytearray()
+                while True:
+                    try:
+                        chunk = os.read(master, 65536)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                self.assertEqual(0, process.wait(timeout=10), output.decode())
+            self.assertIn(b'\x1b[1A', output)
+            log = next((self.root / '.logs').glob('update-*.log')).read_text()
+            self.assertIn('Downloading 2MB/2MB', log)
+            self.assertNotIn('\x1b', log)
+        finally:
+            os.close(master)
+            if slave is not None:
+                os.close(slave)
 
     def test_extra_arguments_are_rejected(self):
         self.assertEqual(2, self.invoke('--background').returncode)
