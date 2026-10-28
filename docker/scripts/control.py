@@ -958,6 +958,7 @@ def environment_variables(environment):
 def build_environment(environment):
     directory = STATE / "environments" / environment["id"]
     variables = environment_variables(environment)
+    variables["SERVER_ADMIN"] = (configuration().get("apache") or {}).get("admin", "webmaster@localhost")
     bin_directory = directory / "bin"
     bin_directory.mkdir(exist_ok=True)
     php = bin_directory / "php"
@@ -1537,7 +1538,8 @@ def main():
         raise ValueError("Run the controller through lamp on the Docker host.")
     previous_umask = os.umask(0o077)
     if arguments.command == "exec":
-        runtime = ('source "${NVM_DIR:-/root/.nvm}/nvm.sh" --no-use\n'
+        runtime = ('export SERVER_ADMIN=' + shlex.quote((configuration().get("apache") or {}).get("admin", "webmaster@localhost")) + '\n'
+                   'source "${NVM_DIR:-/root/.nvm}/nvm.sh" --no-use\n'
                    'if [[ -n $(nvm_find_nvmrc) ]]; then nvm use --silent; fi\n')
         environment = environment_by_directory(arguments.directory) if arguments.directory is not None else load_environment(arguments.id)
         if environment is None:
@@ -1637,7 +1639,8 @@ def main():
                 if environment["status"] != "ready" or pending:
                     (ENABLED / ("lamp-" + environment["id"] + ".conf")).unlink(missing_ok=True)
                 else:
-                    # Rewritten on every start so vhost format changes reach existing environments.
+                    # Refresh CLI variables and vhost configuration for existing environments on every start.
+                    write_setup(environment)
                     vhost(environment)
             default = SITES / "000-000-lamp-deny.conf"
             default.write_text(f"""<VirtualHost *:80>

@@ -198,7 +198,8 @@ class ChatEnvironmentsTest(unittest.TestCase):
              contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
             control.main()
         self.assertEqual(1, len(calls))
-        self.assertEqual(('bash', ['bash', '-c', 'set -e\nsource "${NVM_DIR:-/root/.nvm}/nvm.sh" --no-use\n'
+        self.assertEqual(('bash', ['bash', '-c', 'set -e\nexport SERVER_ADMIN=webmaster@localhost\n'
+                                 'source "${NVM_DIR:-/root/.nvm}/nvm.sh" --no-use\n'
                                  'if [[ -n $(nvm_find_nvmrc) ]]; then nvm use --silent; fi\necho "$LAMP_ID"']), calls[0])
         self.assertEqual(str(self.project), os.getcwd())
 

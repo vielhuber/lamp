@@ -810,6 +810,18 @@ class EnvironmentSetupTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'not found'):
             self.invoke('build', 'abcdef012346')
 
+    def test_cli_server_admin_matches_apache_configuration_and_default(self):
+        for admin in ('admin@example.test', None):
+            with self.subTest(admin=admin):
+                (control.CONFIGURATION / 'settings.yaml').write_text(control.yaml.safe_dump({'apache': {'admin': admin}} if admin else {}))
+                self.invoke('add', '--id', self.identity, '--subdomain', 'cli-admin')
+                environment = control.load_environment(self.identity)
+                control.write_setup(environment)
+                result = subprocess.run(['bash', '-c', 'source "$1"; printf "%s" "$SERVER_ADMIN"',
+                                         'bash', environment['setup_environment']], capture_output=True, text=True)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(admin or 'webmaster@localhost', result.stdout)
+
     def test_node_access_preload_keeps_existing_node_options_without_credentials(self):
         with patch.dict(os.environ, {'NODE_OPTIONS': '--max-old-space-size=2048'}):
             self.invoke('add', '--id', self.identity, '--subdomain', 'browser')
@@ -870,6 +882,7 @@ class EnvironmentSetupTest(unittest.TestCase):
             self.assertEqual('bash', shell)
             self.assertEqual(['bash', '-c'], command[:2])
             self.assertIn(environment['setup_environment'], command[2])
+            self.assertIn('export SERVER_ADMIN=webmaster@localhost\n', command[2])
             self.assertIn('nvm use --silent', command[2])
             self.assertTrue(command[2].endswith('printf "%s" "$LAMP_ID" && false'))
 
@@ -916,6 +929,7 @@ class EnvironmentSetupTest(unittest.TestCase):
         shell, command = execute.call_args.args
         self.assertEqual('bash', shell)
         self.assertEqual(['bash', '-lc'], command[:2])
+        self.assertIn('export SERVER_ADMIN=webmaster@localhost\n', command[2])
         self.assertIn('nvm use --silent', command[2])
         self.assertTrue(command[2].endswith('exit 7'))
         self.assertEqual(0o022, os.umask(0o022))
