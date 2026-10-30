@@ -900,6 +900,7 @@ def database(environment, remove=False):
             run(["mysql"], input=f"DROP DATABASE IF EXISTS {name}; DROP USER IF EXISTS '{name}'@'localhost';\n")
         if environment.get("postgres_owned"):
             run(["psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"], input=
+                f'DROP DATABASE IF EXISTS "{name}_test" WITH (FORCE);\n'
                 f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE);\nDROP ROLE IF EXISTS "{name}";\n')
         return
     existing_mysql = run(["mysql", "-N"], input=f"SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='{name}' UNION SELECT User FROM mysql.user WHERE User='{name}';\n", capture=True)
