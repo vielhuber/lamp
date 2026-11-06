@@ -1347,7 +1347,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
                 run(["git", "check-ref-format", "--branch", branch])
             with long_work():
                 run(["git", "fetch", "--no-tags", arguments.git, "refs/heads/" + branch], cwd=project, environment=git_environment)
-            run(["git", "checkout", "--no-overwrite-ignore", "-B", branch, "FETCH_HEAD"], cwd=project)
+            run(["git", "checkout", "-B", branch, "FETCH_HEAD"], cwd=project)
             run(["git", "remote", "set-url", "origin", arguments.git], cwd=project)
             run(["git", "update-ref", "refs/remotes/origin/" + branch, "HEAD"], cwd=project)
             run(["git", "branch", "--set-upstream-to=origin/" + branch, branch], cwd=project)
@@ -1699,12 +1699,12 @@ def main():
                     run(["git", "fetch", "--no-tags", "origin"], cwd=project, environment={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
                     refs = run(["git", "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin"], cwd=project, capture=True).splitlines()
                 if "refs/heads/" + arguments.branch in refs:
-                    command = ["git", "switch", "--no-overwrite-ignore", arguments.branch]
+                    command = ["git", "switch", arguments.branch]
                 elif "refs/remotes/origin/" + arguments.branch in refs:
-                    command = ["git", "switch", "--no-overwrite-ignore", "--create", arguments.branch, "--track", "origin/" + arguments.branch]
+                    command = ["git", "switch", "--create", arguments.branch, "--track", "origin/" + arguments.branch]
                 else:
                     base = arguments.base if "refs/heads/" + arguments.base in refs else "origin/" + arguments.base
-                    command = ["git", "switch", "--no-overwrite-ignore", "--create", arguments.branch, base]
+                    command = ["git", "switch", "--create", arguments.branch, base]
                 run(command, cwd=project)
             applied = specification(environment)
             try:
@@ -1713,7 +1713,7 @@ def main():
                     write_desired(entries, original)
             except (OSError, ValueError):
                 if previous_branch != arguments.branch:
-                    rollback = ["git", "branch", "--move", previous_branch] if arguments.operation == "rename" else ["git", "switch", "--no-overwrite-ignore", previous_branch]
+                    rollback = ["git", "branch", "--move", previous_branch] if arguments.operation == "rename" else ["git", "switch", previous_branch]
                     run(rollback, cwd=project)
                 raise
             environment["branch"] = arguments.branch
