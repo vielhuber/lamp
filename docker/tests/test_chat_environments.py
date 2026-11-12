@@ -212,23 +212,31 @@ class ChatEnvironmentsTest(unittest.TestCase):
         metadata = control.STATE / 'environments' / self.identity / 'environment.json'
         self.assertEqual(0o600, metadata.stat().st_mode & 0o777)
 
-    def test_ignored_files_and_foreign_index_locks_are_not_removed(self):
+    def test_branch_switch_replaces_only_ignored_files_tracked_in_target_branch(self):
         self.git('switch', 'feature/existing')
         (self.project / 'local.env').write_text('tracked')
         self.git('add', '.')
         self.git('commit', '-m', 'Track environment.')
         self.git('switch', 'main')
-        (self.project / '.git/info/exclude').write_text('local.env\n')
+        (self.project / '.git/info/exclude').write_text('local.env\ncache.env\n')
         (self.project / 'local.env').write_text('private configuration')
-        with self.assertRaises(RuntimeError):
-            self.invoke('branch', self.identity, 'feature/existing')
-        self.assertEqual('private configuration', (self.project / 'local.env').read_text())
+        (self.project / 'cache.env').write_text('keep ignored cache')
+        result = self.invoke('branch', self.identity, 'feature/existing')
+        self.assertEqual('feature/existing', result['branch'])
+        self.assertEqual('feature/existing', self.git('branch', '--show-current'))
+        self.assertEqual('tracked', (self.project / 'local.env').read_text())
+        self.assertEqual('keep ignored cache', (self.project / 'cache.env').read_text())
+        self.assertEqual('', self.git('status', '--porcelain'))
+
+    def test_foreign_index_lock_blocks_branch_switch_without_removing_lock(self):
         lock = self.project / '.git/index.lock'
         lock.write_text('foreign process')
         with patch.object(control.time, 'monotonic', side_effect=[0, 11]):
             with self.assertRaisesRegex(ValueError, 'Git index is busy'):
                 self.invoke('branch', self.identity, 'feature/existing')
         self.assertEqual('foreign process', lock.read_text())
+        self.assertEqual('main', self.git('branch', '--show-current'))
+        self.assertEqual('main', control.load_environment(self.identity)['branch'])
 
     def test_exec_runs_the_script_in_the_environment_and_never_reaches_other_branches(self):
         self.addCleanup(os.chdir, os.getcwd())
