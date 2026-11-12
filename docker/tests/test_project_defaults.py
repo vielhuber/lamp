@@ -50,6 +50,13 @@ class ProjectDefaultsTest(unittest.TestCase):
         entries, _ = control.read_desired()
         self.assertEqual([], entries[0]['aliases'])
 
+    def test_project_branch_overrides_detection_but_not_an_explicit_work_branch(self):
+        self.file.write_text('projects:\n  example.test/owner/project:\n    branch: master\n')
+        for explicit, expected in (({}, 'master'), ({'branch': 'feature/task'}, 'feature/task'), ({'branch': None}, None)):
+            with self.subTest(explicit=explicit):
+                value = control.resolve_project_specification({'git': 'git@example.test:owner/project.git', **explicit}, {'branch': 'main'})
+                self.assertEqual(expected, value['branch'])
+
     def test_env_yaml_inherits_missing_settings_and_preserves_explicit_values(self):
         (self.root / 'env.yaml').write_text('- git: git@example.test:owner/project.git\n  subdomain: site\n  webroot: custom\n')
         entries, _ = control.read_desired()
@@ -85,10 +92,14 @@ class ProjectDefaultsTest(unittest.TestCase):
                      'example.test/owner/project.git: {}',
                      'example.test/owner/project: {webroot: ../outside}',
                      'example.test/owner/project: {aliases: [bad.name]}',
+                     'example.test/owner/project: {branch: 42}',
                      'example.test/owner/project: {php: 8.3}'):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 self.file.write_text('projects:\n' + indent(text, '  '))
                 control.resolve_project_specification({'git': 'git@example.test:owner/project.git'})
+        self.file.write_text('projects:\n  example.test/owner/project: {branch: "bad..branch"}\n')
+        with self.assertRaisesRegex(RuntimeError, 'git failed'):
+            control.resolve_project_specification({'git': 'git@example.test:owner/project.git'})
 
 
 if __name__ == '__main__':

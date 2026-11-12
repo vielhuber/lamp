@@ -123,13 +123,29 @@ class ChatEnvironmentsTest(unittest.TestCase):
 
     def test_existing_chat_environment_is_not_reconfigured_when_project_defaults_change(self):
         (control.CONFIGURATION / 'settings.yaml').write_text(
-            'projects:\n  example.invalid/owner/project:\n    webroot: html/site\n    aliases: [shop]\n'
+            'projects:\n  example.invalid/owner/project:\n    webroot: html/site\n    aliases: [shop]\n    branch: master\n'
         )
         with patch.object(control, 'add') as add:
             result = self.invoke('add', '--id', self.identity, '--git', self.desired['git'], '--branch', 'main')
             add.assert_not_called()
         self.assertIsNone(result['webroot'])
         self.assertIsNone(result['aliases'])
+        self.assertEqual('main', result['branch'])
+
+    def test_dynamic_add_inherits_project_branch_and_preserves_explicit_feature_branch(self):
+        control.save_environment({**self.environment, 'hostname': 'abcdef012345.example.invalid'})
+        (control.CONFIGURATION / 'settings.yaml').write_text(
+            'projects:\n  example.invalid/owner/project:\n    branch: master\n    webroot: public\n'
+        )
+        for options, expected in (([], 'master'), (['--branch', 'feature/task', '--base-branch', 'master'], 'feature/task')):
+            with self.subTest(options=options), patch.object(control, 'add', return_value={'status': 'ready'}) as add:
+                self.invoke('add', '--dynamic', '--git', self.desired['git'], *options)
+                arguments = add.call_args.args[0]
+                self.assertEqual(expected, arguments.branch)
+                self.assertEqual('public', arguments.webroot)
+                self.assertIsNone(arguments.subdomain)
+                self.assertIsNone(arguments.directory)
+                self.assertIsNone(arguments.db_name)
 
     def test_dirty_switch_is_refused_without_parking_or_losing_any_files(self):
         for kind in ('unstaged', 'staged', 'untracked'):

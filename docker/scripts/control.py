@@ -459,8 +459,8 @@ def project_defaults(remote):
             for key, settings in projects.items():
                 if repository_key("https://" + key) != key:
                     raise ValueError("Project keys must use host/owner/repository without a scheme or .git suffix.")
-                if set(settings) - {"webroot", "aliases", "php", "vpn"}:
-                    raise ValueError("Project settings may contain only webroot, aliases, php and vpn.")
+                if set(settings) - {"branch", "webroot", "aliases", "php", "vpn"}:
+                    raise ValueError("Project settings may contain only branch, webroot, aliases, php and vpn.")
     return projects.get(repository_key(remote), {}) if remote else {}
 
 

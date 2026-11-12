@@ -466,6 +466,7 @@ php:
 # optional: private defaults for every environment of a repository
 # projects:
 #     github.com/owner/project:
+#         branch: master
 #         webroot: public
 #         aliases: [shop]
 
