@@ -463,6 +463,17 @@ php:
 # database:
 #     password: '<PASSWORD>'
 
+# optional: private defaults for every environment of a repository
+# projects:
+#     github.com/owner/project:
+#         webroot: public
+#         aliases: [shop]
+
+# optional: repository exceptions for lamp audit; security checks stay active
+# audit:
+#     ignore_missing: [github.com/owner/private-config]
+#     skip_npm_versions: [github.com/owner/lessons]
+
 # optional: vpn tunnels; profiles live in .data/vpn/, names are lowercase, at most twelve characters, letter first
 # vpn:
 #     enabled: true

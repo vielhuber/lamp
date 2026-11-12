@@ -84,11 +84,14 @@ if [[ ! -e "$pending" ]]; then
             done < "$build"
         fi
         if [[ -z "$engine" && "$postgres" = true ]]; then engine=postgres database=$subdomain; fi
-        arguments=(--git "$remote" --branch main --php "$php" --subdomain "$subdomain" --directory "$directory" --webroot "$webroot" --visibility private)
-        if grep -Fxq -- "$name" <<< "$vpn_tunnels"; then arguments+=(--vpn "$name"); fi
+        arguments=(--git "$remote" --branch main --subdomain "$subdomain" --directory "$directory" --visibility private)
+        vpn=
+        if grep -Fxq -- "$name" <<< "$vpn_tunnels"; then vpn=$name; fi
         if [[ -n "$engine" ]]; then arguments+=(--db-name "$database" --db-engine "$engine"); fi
-        jq -cn --arg subdomain "$subdomain" \
-            '$ARGS.positional | {arguments: ., subdomain: $subdomain}' --args -- "${arguments[@]}" >> "$temporary"
+        jq -cn --arg subdomain "$subdomain" --arg php "$php" --arg webroot "$webroot" --arg vpn "$vpn" \
+            '{arguments: $ARGS.positional, subdomain: $subdomain,
+              defaults: {php: $php, webroot: $webroot, vpn: (if $vpn == "" then null else $vpn end)}}' \
+            --args -- "${arguments[@]}" >> "$temporary"
     done < <(find "$folder" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
     mv "$temporary" "$pending"
 fi

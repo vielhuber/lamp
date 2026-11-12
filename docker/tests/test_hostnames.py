@@ -30,9 +30,9 @@ class HostnamesTest(unittest.TestCase):
             self.assertEqual(Path(directory) / 'aistats', control.project_path('abcdef012345', value))
         self.assertEqual('ai', control.ordered_settings(control.validate_specification({'subdomain': 'ai'}))['directory'])
         self.assertEqual('aistats', control.ordered_settings(value)['directory'])
-        nested = control.validate_specification({'subdomain': 'tour', 'directory': 'tourconcept/new'})
+        nested = control.validate_specification({'subdomain': 'site', 'directory': 'example/new'})
         with tempfile.TemporaryDirectory() as directory, patch.object(control, 'PROJECTS', Path(directory)):
-            self.assertEqual(Path(directory) / 'tourconcept' / 'new', control.project_path('abcdef012345', nested))
+            self.assertEqual(Path(directory) / 'example' / 'new', control.project_path('abcdef012345', nested))
         for settings in [{'directory': 'aistats'}, {'subdomain': 'ai', 'directory': 'Ai Stats'}, {'subdomain': 'ai', 'directory': '../x'},
                          {'subdomain': 'ai', 'directory': ''}, {'subdomain': 'ai', 'directory': 42}, {'subdomain': 'ai', 'directory': 'a/../b'}, {'subdomain': 'ai', 'directory': '/abs'}]:
             with self.subTest(settings=settings), self.assertRaises(ValueError):
@@ -46,7 +46,7 @@ class HostnamesTest(unittest.TestCase):
                 control.validate_specification({'subdomain': labels})
 
     def test_repository_directory_preserves_dots_and_case(self):
-        for name in ['vielhuber.de', 'My_Repository', '.github', 'nested/Project.Name']:
+        for name in ['example.test', 'My_Repository', '.github', 'nested/Project.Name']:
             with self.subTest(name=name):
                 value = control.validate_specification({'subdomain': 'project', 'directory': name})
                 self.assertEqual(name, value['directory'])

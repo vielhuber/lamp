@@ -161,6 +161,20 @@ class InitialEnvironmentsTest(unittest.TestCase):
         self.assertIn('different databases', result.stderr)
         self.assertEqual([], self.calls())
 
+    def test_private_project_defaults_override_detection_before_static_registration(self):
+        self.project('multisite', 'echo build\n')
+        (self.root / 'projects/multisite/html/site').mkdir(parents=True)
+        with (self.root / 'data/settings.yaml').open('a') as settings:
+            settings.write('projects:\n  example.test/owner/multisite:\n'
+                           '    webroot: html/site\n    aliases: [shop, blog]\n    php: "8.3"\n')
+        result = self.invoke()
+        self.assertEqual(0, result.returncode, result.stderr)
+        entry = yaml.safe_load((self.root / 'config/env.yaml').read_text())[0]
+        self.assertEqual('html/site', entry['webroot'])
+        self.assertEqual(['shop', 'blog'], entry['aliases'])
+        self.assertEqual('8.3', entry['php'])
+        self.assertEqual([], [call for call in self.calls() if call[0] == 'build'])
+
     def test_failed_registration_resumes_without_repeating_completed_projects(self):
         self.project('first', 'echo build\n')
         self.project('second', 'echo build\n')

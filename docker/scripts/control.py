@@ -120,9 +120,11 @@ def configuration():
     sections = {"git": ("name", "email", "commit_key", "commit_url", "commit_model", "commit_effort"), "apache": ("admin",),
                 "postfix": ("hostname", "relayhost", "username", "password", "sender", "oauth_tenant_id", "oauth_client_id", "oauth_client_secret"),
                 "cloudflare": ("token", "email"), "database": ("password",), "composer": ("github",)}
-    if (not isinstance(value, dict) or set(value) - {"vpn", "php", *sections}
-            or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", "php", *sections))):
-        raise ValueError("settings.yaml may contain only git, apache, postfix, cloudflare, database, composer, php and vpn mappings; the domain belongs in setup.yaml; see README.md.")
+    if (not isinstance(value, dict) or set(value) - {"vpn", "php", "projects", "audit", *sections}
+            or any(value.get(key) is not None and not isinstance(value[key], dict) for key in ("vpn", "php", "projects", "audit", *sections))):
+        raise ValueError("settings.yaml may contain only git, apache, postfix, cloudflare, database, composer, php, vpn, projects and audit mappings; the domain belongs in setup.yaml; see README.md.")
+    project_defaults(None)
+    audit_settings(value)
     value["domain"] = setup["domain"]
     php = value.get("php") or {}
     if set(php) - {"xdebug"} or any(not isinstance(entry, bool) for entry in php.values()):
@@ -152,6 +154,22 @@ def configuration():
                    for key in ("sender", *(["username"] if oauth else [])) if key in postfix)):
         raise ValueError("postfix needs a relayhost and username with either password or all three oauth_* values; OAuth IDs must be UUIDs, sender and OAuth username email addresses.")
     return value
+
+
+def audit_settings(settings):
+    if settings is None:
+        return {}
+    if not isinstance(settings, dict):
+        raise ValueError("settings.yaml must contain a settings mapping.")
+    audit = settings.get("audit")
+    if audit is None:
+        return {}
+    if (not isinstance(audit, dict) or set(audit) - {"ignore_missing", "skip_npm_versions"}
+            or any(not isinstance(entries, list)
+                   or any(not isinstance(key, str) or repository_key("https://" + key) != key for key in entries)
+                   or len({key.lower() for key in entries}) != len(entries) for entries in audit.values())):
+        raise ValueError("audit may contain only ignore_missing and skip_npm_versions lists of unique host/owner/repository keys.")
+    return audit
 
 
 def apply_settings(settings):
@@ -358,7 +376,6 @@ def validate_specification(value):
                        for alias in value["aliases"])
                 or len(set(value["aliases"])) != len(value["aliases"])):
             raise ValueError("aliases must be a list of unique lowercase DNS labels or null.")
-        value["aliases"] = value["aliases"] or None
     if value["git"] is not None:
         build_script(value["git"])
     if value["php"] is not None and value["php"] not in PHP_VERSIONS:
@@ -401,7 +418,7 @@ def validate_specification(value):
     return value
 
 
-def build_script(remote):
+def repository_key(remote):
     match = re.fullmatch(r"(?:git@([A-Za-z0-9.-]+):|https://([A-Za-z0-9.-]+)/)([A-Za-z0-9_./-]+)", remote) if isinstance(remote, str) else None
     if match is None:
         raise ValueError("Use an SSH git@host:path or credential-free HTTPS repository URL.")
@@ -409,7 +426,48 @@ def build_script(remote):
     repository = match[3].rstrip("/").removesuffix(".git")
     if any(part in ("", ".", "..") for part in (host, *repository.split("/"))):
         raise ValueError("Repository URLs must not contain empty or relative path segments.")
+    return host + "/" + repository
+
+
+def build_script(remote):
+    host, repository = repository_key(remote).split("/", 1)
     return CONFIGURATION / "build" / (host + "-" + repository.replace("/", "-") + ".sh")
+
+
+def project_defaults(remote):
+    projects = {}
+    path = CONFIGURATION / "settings.yaml"
+    if path.exists():
+        text = path.read_text()
+        root = yaml.compose(text, Loader=yaml.SafeLoader)
+        if root is not None:
+            if not isinstance(root, yaml.MappingNode):
+                raise ValueError("settings.yaml must contain a settings mapping.")
+            node = next((value for key, value in root.value if key.value == "projects"), None)
+            mappings = [root]
+            if node is not None and node.tag != "tag:yaml.org,2002:null":
+                if not isinstance(node, yaml.MappingNode):
+                    raise ValueError("settings.projects must map repository keys to project settings.")
+                mappings.extend([node, *(settings for _, settings in node.value)])
+            for mapping in mappings:
+                if not isinstance(mapping, yaml.MappingNode):
+                    raise ValueError("Each project needs a settings mapping.")
+                keys = [key.value for key, _ in mapping.value if isinstance(key, yaml.ScalarNode) and key.tag == "tag:yaml.org,2002:str"]
+                if len(keys) != len(mapping.value) or len(set(keys)) != len(keys):
+                    raise ValueError("Project YAML keys must be unique strings; merge keys are not supported.")
+            projects = yaml.safe_load(text).get("projects") or {}
+            for key, settings in projects.items():
+                if repository_key("https://" + key) != key:
+                    raise ValueError("Project keys must use host/owner/repository without a scheme or .git suffix.")
+                if set(settings) - {"webroot", "aliases", "php", "vpn"}:
+                    raise ValueError("Project settings may contain only webroot, aliases, php and vpn.")
+    return projects.get(repository_key(remote), {}) if remote else {}
+
+
+def resolve_project_specification(value, automatic=None):
+    if not isinstance(value, dict):
+        return validate_specification(value)
+    return validate_specification({**(automatic or {}), **project_defaults(value.get("git")), **value})
 
 
 def resolve_build(value):
@@ -533,8 +591,9 @@ def validate_domains(desired, settings):
 
 
 def ordered_settings(settings):
+    defaults = project_defaults(settings.get("git"))
     return {key: settings.get(key) for key in ("git", *ENVIRONMENT_DEFAULTS)
-            if key not in ("php", "build", "aliases") or settings.get(key) is not None}
+            if key not in ("php", "build", "aliases") or settings.get(key) is not None or key in defaults}
 
 
 def write_desired(entries, original):
@@ -570,7 +629,7 @@ def read_desired():
             raise ValueError("YAML keys must be unique strings; merge keys are not supported.")
     value = yaml.safe_load(original)
     raw = list(value.values()) if legacy else value
-    entries = [validate_specification(migrate_specification(settings)) for settings in raw]
+    entries = [resolve_project_specification(migrate_specification(settings)) for settings in raw]
     if legacy:
         # Older files were keyed by ID and listed dynamic environments; those live in the runtime state only now.
         entries = [entry for entry in entries if subdomain_labels(entry)]
@@ -1488,7 +1547,7 @@ def remove(identity):
 def main():
     parser = Parser()
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("prepare", "validate", "reconcile", "reset", "postfix-setup", "postfix-refresh"):
+    for command in ("prepare", "validate", "reconcile", "reset", "postfix-setup", "postfix-refresh", "audit-settings"):
         commands.add_parser(command)
     commands.add_parser("list").add_argument("--search")
     for command in ("show", "remove", "access"):
@@ -1538,6 +1597,10 @@ def main():
     if not Path("/.dockerenv").exists():
         raise ValueError("Run the controller through lamp on the Docker host.")
     previous_umask = os.umask(0o077)
+    if arguments.command == "audit-settings":
+        path = CONFIGURATION / "settings.yaml"
+        print(json.dumps(audit_settings(yaml.safe_load(path.read_text()) if path.exists() else None)))
+        return
     if arguments.command == "exec":
         runtime = ('export SERVER_ADMIN=' + shlex.quote((configuration().get("apache") or {}).get("admin", "webmaster@localhost")) + '\n'
                    'source "${NVM_DIR:-/root/.nvm}/nvm.sh" --no-use\n'
@@ -1725,8 +1788,12 @@ def main():
         elif arguments.command == "register-initial":
             count = len(entries)
             for line in arguments.pending.read_text().splitlines():
-                requested = create.parse_args(json.loads(line)["arguments"])
-                value = validate_specification({key: getattr(requested, key) for key in ("git", *ENVIRONMENT_DEFAULTS)})
+                entry = json.loads(line)
+                requested = create.parse_args(entry["arguments"])
+                value = resolve_project_specification(
+                    {key: getattr(requested, key) for key in ("git", *ENVIRONMENT_DEFAULTS) if getattr(requested, key) is not None},
+                    entry.get("defaults")
+                )
                 if not subdomain_labels(value):
                     raise ValueError("Initial registration requires static environments with a subdomain.")
                 if value not in entries:
@@ -1749,14 +1816,14 @@ def main():
             identity = arguments.id or uuid.uuid4().hex[:12]
             if arguments.base_branch:
                 run(["git", "check-ref-format", "--branch", arguments.base_branch])
-            requested = validate_specification({key: getattr(arguments, key) for key in ("git", *ENVIRONMENT_DEFAULTS)})
+            explicit = {key: getattr(arguments, key) for key in ("git", *ENVIRONMENT_DEFAULTS) if getattr(arguments, key) is not None}
+            requested = resolve_project_specification(explicit)
             if arguments.id and (STATE / "environments" / identity / "environment.json").is_file():
                 existing = load_environment(identity)
                 applied = specification(existing)
                 if arguments.dynamic and subdomain_labels(applied):
                     raise ValueError("Existing environment is static; --dynamic cannot change its type.")
-                if any(applied.get(key) != requested[key]
-                       for key in ("git", *ENVIRONMENT_DEFAULTS) if getattr(arguments, key) is not None):
+                if any(applied.get(key) != requested[key] for key in explicit):
                     raise ValueError("Environment ID already exists with different settings.")
                 if existing["status"] != "ready":
                     raise ValueError("Environment exists but is not ready; inspect and repair it before retrying.")
@@ -1789,6 +1856,7 @@ def main():
                 raise ValueError("The requested domain is still assigned to an existing environment; reconcile or remove it first.")
             if static:
                 write_desired(entries, original)
+            vars(arguments).update(requested)
             with environment_lock(identity):
                 result = add(arguments, settings, identity)
         elif arguments.command == "reconcile":

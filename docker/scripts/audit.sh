@@ -23,6 +23,15 @@ while (( $# )); do
 done
 if [[ -t 1 && "${TERM:-dumb}" != dumb ]]; then clear; fi
 cd /var/www || exit 1
+audit_settings=$(python3 /opt/lamp/control.py audit-settings) || exit 1
+declare -A ignore_missing=()
+declare -A skip_npm_versions=()
+while IFS= read -r repository; do
+    [[ -n "$repository" ]] && ignore_missing["$repository"]=1
+done <<< "$(jq -r '.ignore_missing // [] | .[] | ascii_downcase' <<< "$audit_settings")"
+while IFS= read -r repository; do
+    [[ -n "$repository" ]] && skip_npm_versions["$repository"]=1
+done <<< "$(jq -r '.skip_npm_versions // [] | .[] | ascii_downcase' <<< "$audit_settings")"
 
 audit_included_folder() {
     (( ${#included[@]} == 0 )) || [[ -v included["$1"] && ! -v ignored["$1"] ]]
@@ -47,7 +56,7 @@ audit_own_repository() {
     local remote
     remote=$(git -C "$1" remote get-url origin 2>/dev/null) || return 0
     if [[ "${remote,,}" =~ ^(git@github\.com:|https?://github\.com/|ssh://git@github\.com/)([^/]+)/ ]]; then
-        [[ "${BASH_REMATCH[2]}" = vielhuber ]] || grep -Fxiq -- "${BASH_REMATCH[2]}" <<< "$organizations"
+        [[ -z "$account" || "${BASH_REMATCH[2]}" = "${account,,}" ]] || grep -Fxiq -- "${BASH_REMATCH[2]}" <<< "$organizations"
         return
     fi
     return 0
@@ -61,10 +70,12 @@ else
     printf '⚠️ ignore_from_audit in setup.yaml could not be read.\n'
 fi
 
-if organizations=$(gh org list --limit 10000) && repositories=$(while IFS= read -r owner; do
+account=''
+organizations=''
+if account=$(gh api user --jq .login) && [[ -n "$account" ]] && organizations=$(gh org list --limit 10000) && repositories=$(while IFS= read -r owner; do
     [[ -n "$owner" ]] || continue
     gh repo list "$owner" --no-archived --limit 10000 --json name,sshUrl --jq '.[] | "\(.name) \(.sshUrl)"' || exit 1
-done <<< "$(printf '%s\n' vielhuber "$organizations" | sort -u)" | sort -u); then
+done <<< "$(printf '%s\n' "$account" "$organizations" | sort -fu)" | sort -u); then
     declare -A local_repositories=()
     for directory in */; do
         audit_included_folder "${directory%/}" || continue
@@ -75,7 +86,8 @@ done <<< "$(printf '%s\n' vielhuber "$organizations" | sort -u)" | sort -u); the
     done
     missing=0
     while read -r name url; do
-        [[ -z "$name" || "$name" = setup || "$name" = vielhuber ]] && continue
+        [[ -z "$name" ]] && continue
+        [[ -v ignore_missing["github.com/$(audit_repository_identity "$url")"] ]] && continue
         audit_included_folder "$name" || continue
         if [[ ! -v local_repositories["$(audit_repository_identity "$url")"] ]]; then
             [[ "$missing" -eq 0 ]] && printf '\n🔎 GitHub repositories missing locally\n\n'
@@ -131,6 +143,8 @@ for d in ./*/; do
     [[ "$n" = _archive || -v ignored["$n"] ]] && continue
     audit_included_folder "$n" || continue
     audit_own_repository "$d" || continue
+    remote=$(git -C "$d" remote get-url origin 2>/dev/null) || remote=''
+    repository="github.com/$(audit_repository_identity "$remote")"
     lamp_ok=0
     if [[ "$lamp_read" -eq 0 ]]; then
         lamp_ok=2
@@ -204,7 +218,7 @@ for d in ./*/; do
                         dependency_details+=("${manifest#"$d"}: npm audit failed ($npm_audit_error)")
                     fi
                 fi
-                [[ "$n" = vuejs-tutorial ]] && continue
+                [[ -v skip_npm_versions["$repository"] ]] && continue
                 # registry connections sporadically stall until the timeout, a fresh run usually succeeds
                 for attempt in 1 2 3 4 5; do
                     ncu_result=0

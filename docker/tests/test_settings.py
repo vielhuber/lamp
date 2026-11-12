@@ -52,6 +52,39 @@ class SettingsTest(unittest.TestCase):
                 (self.root / 'settings.yaml').write_text(text + '\n')
                 control.configuration()
 
+    def test_projects_share_settings_with_other_sections_and_are_validated(self):
+        (self.root / 'settings.yaml').write_text('git:\n  name: Jane Doe\nprojects:\n'
+                                               '  example.test/owner/site:\n    webroot: html/site\n    aliases: [shop]\n')
+        settings = control.configuration()
+        self.assertEqual({'name': 'Jane Doe'}, settings['git'])
+        self.assertEqual({'webroot': 'html/site', 'aliases': ['shop']}, settings['projects']['example.test/owner/site'])
+        for text in ('projects: []', 'projects:\n  example.test/owner/site: {db_name: shared}',
+                     'projects: {}\nprojects: {}'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                (self.root / 'settings.yaml').write_text(text)
+                control.configuration()
+
+    def test_audit_exceptions_are_validated_and_only_audit_settings_are_exported(self):
+        audit = {'ignore_missing': ['github.com/developer/config'],
+                 'skip_npm_versions': ['github.com/example-org/lessons']}
+        (self.root / 'settings.yaml').write_text(control.yaml.safe_dump({'audit': audit, 'database': {'password': 'fixture-secret'}}))
+        self.assertEqual(audit, control.configuration()['audit'])
+        (self.root / 'setup.yaml').write_text('domain: [\n')
+        exists = Path.exists
+        with patch('sys.argv', ['control', 'audit-settings']), patch('builtins.print') as output, \
+             patch.object(Path, 'exists', lambda path: str(path) == '/.dockerenv' or exists(path)), patch.object(control.os, 'umask'):
+            control.main()
+        self.assertEqual(audit, json.loads(output.call_args.args[0]))
+        self.run.assert_not_called()
+        (self.root / 'setup.yaml').write_text('domain: example.test\n')
+        for audit in ([], {'unknown': []}, {'ignore_missing': None}, {'ignore_missing': 'github.com/developer/config'},
+                      {'skip_npm_versions': [42]}, {'ignore_missing': ['https://github.com/developer/config']},
+                      {'ignore_missing': ['github.com/developer/config.git']}, {'ignore_missing': ['github.com/developer/../config']},
+                      {'ignore_missing': ['github.com/developer/config', 'github.com/Developer/config']}):
+            with self.subTest(audit=audit), self.assertRaises(ValueError):
+                (self.root / 'settings.yaml').write_text(control.yaml.safe_dump({'audit': audit}))
+                control.configuration()
+
     def test_setup_holds_the_domain_and_the_data_repository(self):
         (self.root / 'setup.yaml').write_text('domain: example.test\ndata: git@example.test:owner/lamp-data.git\n')
         self.assertEqual({'domain': 'example.test'}, control.configuration())

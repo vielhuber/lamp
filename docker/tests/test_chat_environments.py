@@ -102,6 +102,35 @@ class ChatEnvironmentsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'different settings'):
             self.invoke('add', '--id', self.identity, '--git', self.desired['git'], '--branch', 'other')
 
+    def test_dynamic_add_uses_private_defaults_but_explicit_cli_options_win(self):
+        control.save_environment({**self.environment, 'hostname': 'abcdef012345.example.invalid'})
+        (control.CONFIGURATION / 'settings.yaml').write_text(
+            'projects:\n  example.invalid/owner/project:\n'
+            '    webroot: html/site\n    aliases: [shop, blog]\n    php: "8.3"\n'
+        )
+        for options, webroot, aliases, php in [([], 'html/site', ['shop', 'blog'], '8.3'),
+                                               (['--webroot', 'public', '--alias', 'custom', '--php', '8.4'],
+                                                'public', ['custom'], '8.4')]:
+            with self.subTest(options=options), patch.object(control, 'add', return_value={'status': 'ready'}) as add:
+                self.invoke('add', '--dynamic', '--git', self.desired['git'], '--branch', 'main', *options)
+                arguments = add.call_args.args[0]
+                self.assertEqual(webroot, arguments.webroot)
+                self.assertEqual(aliases, arguments.aliases)
+                self.assertEqual(php, arguments.php)
+                self.assertIsNone(arguments.subdomain)
+                self.assertIsNone(arguments.directory)
+                self.assertIsNone(arguments.db_name)
+
+    def test_existing_chat_environment_is_not_reconfigured_when_project_defaults_change(self):
+        (control.CONFIGURATION / 'settings.yaml').write_text(
+            'projects:\n  example.invalid/owner/project:\n    webroot: html/site\n    aliases: [shop]\n'
+        )
+        with patch.object(control, 'add') as add:
+            result = self.invoke('add', '--id', self.identity, '--git', self.desired['git'], '--branch', 'main')
+            add.assert_not_called()
+        self.assertIsNone(result['webroot'])
+        self.assertIsNone(result['aliases'])
+
     def test_dirty_switch_is_refused_without_parking_or_losing_any_files(self):
         for kind in ('unstaged', 'staged', 'untracked'):
             with self.subTest(kind=kind):

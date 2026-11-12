@@ -24,14 +24,17 @@ class AuditTest(unittest.TestCase):
         source = (ROOT / 'docker/scripts/audit.sh').read_text()
         self.script = source.replace('/var/www', str(self.projects)).replace('/etc/lamp-config/env.yaml', str(self.config))
         self.script = self.script.replace('/etc/lamp-config/setup.yaml', str(self.setup)).replace('/tmp/lamp-audit.log', str(self.root / 'audit.log'))
+        self.script = self.script.replace('python3 /opt/lamp/control.py audit-settings', 'printf \'%s\' "$TEST_AUDIT_SETTINGS"')
         self.environment = {**os.environ, 'PATH': str(self.root / 'bin') + ':' + os.environ['PATH'],
-                            'TEST_ROOT': str(self.root), 'TEST_REPOSITORIES': '', 'TEST_ORGANIZATIONS': '',
+                            'TEST_ROOT': str(self.root), 'TEST_LOGIN': 'developer', 'TEST_AUDIT_SETTINGS': '{}', 'TEST_REPOSITORIES': '', 'TEST_ORGANIZATIONS': '',
                             'TEST_ORGANIZATION_REPOSITORIES': '', 'TEST_DIRTY': '',
                             'TEST_BEHIND': '0', 'TEST_DIVERGED': '0', 'TEST_FETCH': '0'}
         self.executable('gh', '''
-if [[ "$1 $2" = 'org list' ]]; then
+if [[ "$1 $2" = 'api user' ]]; then
+    printf '%s\\n' "$TEST_LOGIN"
+elif [[ "$1 $2" = 'org list' ]]; then
     printf '%s\\n' "$TEST_ORGANIZATIONS"
-elif [[ "$3" = vielhuber ]]; then
+elif [[ "$3" = "$TEST_LOGIN" ]]; then
     printf '%s\\n' "$TEST_REPOSITORIES"
 else
     printf '%s\\n' "$TEST_ORGANIZATION_REPOSITORIES"
@@ -87,11 +90,12 @@ esac
         self.assertIn('Analyzing 0 projects', output)
 
     def test_mapping_exclusions_worktrees_hidden_folders_and_missing_lamp(self):
-        (self.project('vielhuber') / '.origin').write_text('git@github.com:vielhuber/vielhuber.de.git')
+        (self.project('developer') / '.origin').write_text('git@github.com:developer/developer.de.git')
         self.project('.hidden', registered=False)
         self.project('_archive', registered=False)
         (self.projects / '.plain').mkdir()
-        output = self.invoke(TEST_REPOSITORIES='setup url\nvielhuber url\nvielhuber.de git@github.com:vielhuber/vielhuber.de.git\nforgotten git@github.com:vielhuber/forgotten.git')
+        output = self.invoke(TEST_AUDIT_SETTINGS=json.dumps({'ignore_missing': ['github.com/developer/setup', 'github.com/developer/developer']}),
+                             TEST_REPOSITORIES='setup git@github.com:developer/setup.git\ndeveloper git@github.com:developer/developer.git\ndeveloper.de git@github.com:developer/developer.de.git\nforgotten git@github.com:developer/forgotten.git')
         self.assertIn('forgotten [not cloned]', output)
         self.assertIn('1 repositories missing locally.', output)
         self.assertIn('.plain [no git]', output)
@@ -101,11 +105,11 @@ esac
         self.assertIn('1 projects are up to date.', output)
 
     def test_ignored_folders_skip_every_check_but_still_count_as_cloned(self):
-        (self.project('mirror', registered=False) / '.origin').write_text('git@github.com:vielhuber/mirror.git')
+        (self.project('mirror', registered=False) / '.origin').write_text('git@github.com:developer/mirror.git')
         (self.projects / 'uploads').mkdir()
         self.project('checked')
         self.setup.write_text('domain: example.test\nignore_from_audit:\n    - mirror\n    - uploads\n')
-        output = self.invoke(TEST_REPOSITORIES='mirror git@github.com:vielhuber/mirror.git', TEST_DIRTY=' M file')
+        output = self.invoke(TEST_REPOSITORIES='mirror git@github.com:developer/mirror.git', TEST_DIRTY=' M file')
         self.assertNotIn('mirror', output)
         self.assertNotIn('uploads', output)
         self.assertIn('Analyzing 1 projects', output)
@@ -114,26 +118,61 @@ esac
         self.assertIn('checked status', calls)
         self.assertNotIn('mirror status', calls)
 
+    def test_missing_clone_exceptions_match_full_origins_and_do_not_skip_existing_clones(self):
+        project = self.project('renamed-config')
+        (project / '.origin').write_text('git@github.com:developer/config.git')
+        output = self.invoke(TEST_AUDIT_SETTINGS=json.dumps({'ignore_missing': ['github.com/developer/config']}),
+                             TEST_ORGANIZATIONS='example-org',
+                             TEST_REPOSITORIES='config git@github.com:developer/config.git',
+                             TEST_ORGANIZATION_REPOSITORIES='config git@github.com:example-org/config.git',
+                             TEST_DIRTY=' M file')
+        self.assertIn('1 repositories missing locally.', output)
+        self.assertRegex(output, r'renamed-config\s+\[modified\]')
+        self.assertIn('renamed-config status', (self.root / 'git-calls').read_text())
+
+    def test_default_audit_has_no_repository_name_exceptions(self):
+        output = self.invoke(TEST_REPOSITORIES='setup git@github.com:developer/setup.git\ndeveloper git@github.com:developer/developer.git')
+        self.assertIn('setup [not cloned]', output)
+        self.assertIn('developer [not cloned]', output)
+        self.assertIn('2 repositories missing locally.', output)
+
+    def test_authenticated_account_is_used_instead_of_a_fixed_owner(self):
+        (self.project('own') / '.origin').write_text('git@github.com:Another-Account/own.git')
+        (self.project('foreign') / '.origin').write_text('git@github.com:developer/foreign.git')
+        output = self.invoke(TEST_LOGIN='Another-Account', TEST_DIRTY=' M file',
+                             TEST_REPOSITORIES='missing git@github.com:Another-Account/missing.git')
+        self.assertIn('missing [not cloned]', output)
+        self.assertIn('Analyzing 1 projects', output)
+        self.assertRegex(output, r'own\s+\[modified\]')
+        self.assertNotIn('foreign status', (self.root / 'git-calls').read_text())
+
+    def test_failed_account_lookup_remains_visible_and_local_checks_continue(self):
+        (self.project('own') / '.origin').write_text('git@github.com:developer/own.git')
+        self.executable('gh', 'exit 1')
+        output = self.invoke(TEST_DIRTY=' M file')
+        self.assertIn('GitHub repository check failed', output)
+        self.assertRegex(output, r'own\s+\[modified\]')
+
     def test_unreadable_setup_is_reported(self):
         self.setup.write_text('domain: [\n')
         self.assertIn('⚠️ ignore_from_audit in setup.yaml could not be read.', self.invoke())
 
     def test_repeated_exclusions_combine_with_configured_folders_and_security_flag(self):
-        for name in ('br-kk', 'hovawartdb', 'configured'):
+        for name in ('project-one', 'project-two', 'configured'):
             project = self.project(name, registered=False)
-            (project / '.origin').write_text(f'git@github.com:vielhuber/{name}.git')
+            (project / '.origin').write_text(f'git@github.com:developer/{name}.git')
             (project / 'package.json').write_text('{}')
         (self.projects / 'uploads').mkdir()
         self.project('checked')
         self.setup.write_text('ignore_from_audit:\n    - configured\n')
         self.executable('npm', 'touch "$TEST_ROOT/security-called"; printf "{}"')
-        output = self.invoke('--exclude', 'br-kk', '--no-npm-vulnerabilities',
-                             '--exclude', 'hovawartdb', '--exclude', 'uploads',
-                             TEST_REPOSITORIES='br-kk git@github.com:vielhuber/br-kk.git', TEST_DIRTY=' M file')
+        output = self.invoke('--exclude', 'project-one', '--no-npm-vulnerabilities',
+                             '--exclude', 'project-two', '--exclude', 'uploads',
+                             TEST_REPOSITORIES='project-one git@github.com:developer/project-one.git', TEST_DIRTY=' M file')
         self.assertIn('Analyzing 1 projects', output)
         self.assertRegex(output, r'checked\s+\[modified\]')
         calls = (self.root / 'git-calls').read_text()
-        for name in ('br-kk', 'hovawartdb', 'configured', 'uploads'):
+        for name in ('project-one', 'project-two', 'configured', 'uploads'):
             self.assertNotIn(name, output)
             self.assertNotIn(f'{name} status', calls)
             self.assertNotIn(f'{name} fetch', calls)
@@ -154,7 +193,7 @@ esac
         (self.projects / 'unrelated-files').mkdir()
         self.executable('ncu', 'printf "%s\\n" "$PWD" >> "$TEST_ROOT/npm-calls"; printf "{}"')
         output = self.invoke('--include', 'foo', '--include', 'bar', '--include', 'foo',
-                             TEST_DIRTY=' M tracked', TEST_REPOSITORIES='unrelated git@github.com:vielhuber/unrelated.git')
+                             TEST_DIRTY=' M tracked', TEST_REPOSITORIES='unrelated git@github.com:developer/unrelated.git')
         self.assertIn('Analyzing 2 projects', output)
         self.assertRegex(output, r'foo\s+\[modified\]')
         self.assertRegex(output, r'bar\s+\[modified\]')
@@ -177,7 +216,7 @@ esac
         output = self.invoke('--include', 'configured', '--exclude', 'excluded', '--include', 'excluded',
                              '--include', '.selected project', '--include', 'missing-excluded', '--exclude', 'missing-excluded',
                              '--no-npm-vulnerabilities', TEST_DIRTY=' M tracked',
-                             TEST_REPOSITORIES='missing-excluded git@github.com:vielhuber/missing-excluded.git')
+                             TEST_REPOSITORIES='missing-excluded git@github.com:developer/missing-excluded.git')
         self.assertIn('Analyzing 1 projects', output)
         self.assertRegex(output, r'\.selected project\s+\[modified\]')
         self.assertNotIn('configured', output)
@@ -193,7 +232,7 @@ esac
         (self.projects / 'plain').mkdir()
         (self.projects / 'unrelated-files').mkdir()
         output = self.invoke('--include', 'plain', '--include', 'missing',
-                             TEST_REPOSITORIES='missing git@github.com:vielhuber/missing.git\nunrelated git@github.com:vielhuber/unrelated.git')
+                             TEST_REPOSITORIES='missing git@github.com:developer/missing.git\nunrelated git@github.com:developer/unrelated.git')
         self.assertIn('plain [no git]', output)
         self.assertIn('missing [not cloned]', output)
         self.assertNotIn('unrelated', output)
@@ -225,9 +264,9 @@ esac
         self.assertFalse((self.root / 'pulled').exists())
 
     def test_own_public_private_and_unknown_origins_remain_in_audit(self):
-        for name, remote in [('private', 'git@github.com:vielhuber/private.git'),
-                             ('public', 'https://github.com/vielhuber/public.git'),
-                             ('ssh-uri', 'ssh://git@github.com/Vielhuber/project.git'),
+        for name, remote in [('private', 'git@github.com:developer/private.git'),
+                             ('public', 'https://github.com/developer/public.git'),
+                             ('ssh-uri', 'ssh://git@github.com/Developer/project.git'),
                              ('self-hosted', 'git@example.test:private/project.git')]:
             project = self.project(name, registered=False)
             (project / '.origin').write_text(remote)
@@ -265,14 +304,16 @@ esac
         project = self.project('project')
         (project / '.origin').write_text('git@github.com:another-owner/project.git')
         self.project('without-origin')
-        output = self.invoke(TEST_REPOSITORIES='project git@github.com:vielhuber/project.git\nwithout-origin git@github.com:vielhuber/without-origin.git')
+        output = self.invoke(TEST_REPOSITORIES='project git@github.com:developer/project.git\nwithout-origin git@github.com:developer/without-origin.git')
         self.assertIn('project [not cloned]', output)
         self.assertIn('without-origin [not cloned]', output)
         self.assertIn('2 repositories missing locally.', output)
 
     def test_missing_repository_check_excludes_archived_personal_and_organization_repositories(self):
         self.executable('gh', '''
-if [[ "$1 $2" = 'org list' ]]; then
+if [[ "$1 $2" = 'api user' ]]; then
+    printf '%s\\n' "$TEST_LOGIN"
+elif [[ "$1 $2" = 'org list' ]]; then
     printf 'example-org\\n'
 else
     printf '%s-active url\\n' "$3"
@@ -280,14 +321,16 @@ else
 fi
 ''')
         output = self.invoke()
-        self.assertIn('vielhuber-active [not cloned]', output)
+        self.assertIn('developer-active [not cloned]', output)
         self.assertIn('example-org-active [not cloned]', output)
         self.assertNotIn('archived', output)
         self.assertIn('2 repositories missing locally.', output)
 
     def test_failed_organization_repository_lookup_remains_visible(self):
         self.executable('gh', '''
-if [[ "$1 $2" = 'org list' ]]; then printf 'example-org\\n';
+if [[ "$1 $2" = 'api user' ]]; then
+    printf '%s\\n' "$TEST_LOGIN"
+elif [[ "$1 $2" = 'org list' ]]; then printf 'example-org\\n';
 elif [[ "$3" = example-org ]]; then exit 1;
 fi
 ''')
@@ -378,8 +421,9 @@ printf '{"dependency":"^2.0.0"}'
         self.assertIn('npm, composer, php, nvm', output)
         self.assertEqual([str(theme)], (self.root / 'npm-calls').read_text().splitlines())
 
-    def test_vue_tutorial_skips_only_npm_checks(self):
-        project = self.project('vuejs-tutorial', registered=False)
+    def test_configured_repository_skips_only_npm_version_checks(self):
+        project = self.project('legacy-lessons', registered=False)
+        (project / '.origin').write_text('https://github.com/developer/old-lessons.git')
         lesson = project / '04 - cli/my-project'
         lesson.mkdir(parents=True)
         (lesson / 'package.json').write_text('{"dependencies":{"vue":"^2.0.0"}}')
@@ -387,9 +431,12 @@ printf '{"dependency":"^2.0.0"}'
         self.executable('ncu', 'touch "$TEST_ROOT/ncu-called"; printf \'{"vue":"^3.0.0"}\'')
         self.executable('composer', 'exit 1')
         self.executable('php8.5', 'exit 1')
-        output = self.invoke(TEST_DIRTY=' M tracked', TEST_BEHIND='1')
+        self.executable('npm', 'touch "$TEST_ROOT/security-called"; printf \'{"metadata":{"vulnerabilities":{"total":0}}}\'')
+        output = self.invoke(TEST_DIRTY=' M tracked', TEST_BEHIND='1',
+                             TEST_AUDIT_SETTINGS=json.dumps({'skip_npm_versions': ['github.com/Developer/old-lessons']}))
         self.assertIn('[lamp missing, composer, modified, behind/ahead]', output)
         self.assertFalse((self.root / 'ncu-called').exists())
+        self.assertTrue((self.root / 'security-called').exists())
 
     def test_uninstalled_dev_dependencies_are_checked_without_upgrading(self):
         project = self.project('boilerplate')
@@ -527,8 +574,8 @@ printf '{}'
         (self.root / 'docker/docker-compose.override.yml').write_text('services: {}\n')
         self.executable('docker', 'printf "%s\\n" "$*" >> "$TEST_ROOT/docker-calls"\nif [[ "$1" = image ]]; then exit 1; fi')
         for arguments in ([], ['--no-npm-vulnerabilities'],
-                          ['--no-npm-vulnerabilities', '--exclude', 'br-kk', '--exclude', 'hovawartdb'],
-                          ['--exclude', 'br-kk', '--no-npm-vulnerabilities'],
+                          ['--no-npm-vulnerabilities', '--exclude', 'project-one', '--exclude', 'project-two'],
+                          ['--exclude', 'project-one', '--no-npm-vulnerabilities'],
                           ['--include', 'foo', '--include', 'bar'],
                           ['--include', 'foo', '--exclude', 'bar', '--no-npm-vulnerabilities']):
             with self.subTest(arguments=arguments):
