@@ -33,17 +33,19 @@ def main(arguments):
     ):
         return subprocess.run(["/usr/bin/curl", *arguments]).returncode
     urls = []
-    takes_value = {"--output", "--request", "--header", "--data", "--data-raw", "--data-binary", "--data-urlencode", "--form", "--form-string", "--max-time", "--connect-timeout", "--user-agent", "--cookie", "--cookie-jar", "--upload-file", "--write-out"}
+    takes_value = {"--output", "--request", "--header", "--dump-header", "--data", "--data-raw", "--data-binary", "--data-urlencode", "--form", "--form-string", "--max-time", "--connect-timeout", "--user-agent", "--cookie", "--cookie-jar", "--upload-file", "--write-out"}
     switches = {"--silent", "--show-error", "--fail", "--fail-with-body", "--head", "--location", "--compressed", "--get", "--globoff"}
     index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument in takes_value or argument in {"-o", "-X", "-H", "-d", "-F", "-m", "-A", "-b", "-c", "-T", "-w"}:
+        if argument in takes_value or argument in {"-o", "-X", "-H", "-D", "-d", "-F", "-m", "-A", "-b", "-c", "-T", "-w"}:
             index += 1
             if index >= len(arguments):
                 raise ValueError("Missing curl option value.")
         elif argument in switches or re.fullmatch(r"-[sSfILG]+", argument):
             pass
+        elif argument == "--insecure" or re.fullmatch(r"-[sSfILGk]*k[sSfILGk]*", argument):
+            raise ValueError("This curl wrapper requires TLS certificate verification; remove --insecure/-k.")
         elif argument.startswith("-"):
             raise ValueError("Unsupported option for authenticated curl.")
         else:

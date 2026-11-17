@@ -44,6 +44,15 @@ class AccessCurlTest(unittest.TestCase):
             self.assertIn('%{http_code} %{time_total}', self.calls[-1])
             self.assertNotIn('test-secret', ' '.join(self.calls[-1]))
 
+    def test_response_headers_can_be_written_to_a_file_or_stdout(self):
+        for option in ('-D', '--dump-header'):
+            for destination in ('-', '/tmp/response-headers'):
+                with self.subTest(option=option, destination=destination):
+                    self.assertEqual(0, curl.main(['abcdef123456', '-sS', option, destination, 'https://example.invalid/login']))
+                    self.assertEqual(destination, self.calls[-1][self.calls[-1].index(option) + 1])
+                    self.assertEqual('0', self.calls[-1][self.calls[-1].index('--max-redirs') + 1])
+                    self.assertNotIn('test-secret', ' '.join(self.calls[-1]))
+
     def test_foreign_origins_never_receive_credentials(self):
         for url in ['https://example.invalid.evil.test/', 'http://example.invalid', 'https://example.invalid:8443', 'https://other.invalid']:
             with self.subTest(url=url):
@@ -68,7 +77,7 @@ class AccessCurlTest(unittest.TestCase):
 
     def test_authenticated_requests_cannot_disable_tls_verification(self):
         for option in ['-k', '-ksSf', '--insecure']:
-            with self.assertRaises(ValueError):
+            with self.assertRaisesRegex(ValueError, 'requires TLS certificate verification'):
                 curl.main(['--automatic', 'abcdef123456', option, 'https://example.invalid'])
         self.assertEqual([], self.calls)
 
