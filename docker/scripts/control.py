@@ -1135,12 +1135,15 @@ def run_sync(environment, profile):
 
 def resolve_document_root(project, webroot):
     root = project
-    for subdirectory in ("public", "web"):
-        if (project / subdirectory / "index.php").is_file():
-            root = project / subdirectory
-            break
     if webroot is not None:
         root = project / webroot
+    elif (project / "_public").is_dir():
+        root = project / "_public"
+    else:
+        for subdirectory in ("public", "web"):
+            if (project / subdirectory / "index.php").is_file():
+                root = project / subdirectory
+                break
     if not root.is_dir():
         return None
     if not root.resolve().is_relative_to(project.resolve()):
@@ -1522,7 +1525,7 @@ def add(arguments, settings, identity, current=None, *, force_build=False, reaso
     return show(environment)
 
 
-def remove(identity):
+def remove(identity, *, delete_owned_project=False):
     environment = load_environment(identity)
     project = environment_project(environment)
     environment["status"] = "removing"
@@ -1533,7 +1536,7 @@ def remove(identity):
     sync_visibility(configuration(), {}, identities={identity}, publish=False)
     if environment.get("mysql_owned") or environment.get("postgres_owned"):
         database(environment, remove=True)
-    if not subdomain_labels(environment) and project.exists():
+    if (not subdomain_labels(environment) or (delete_owned_project and environment.get("project_owned"))) and project.exists():
         shutil.rmtree(project)
     (SITES / name).unlink(missing_ok=True)
     shutil.rmtree(STATE / "environments" / identity)
@@ -1894,12 +1897,22 @@ def main():
             return
         else:
             identity = validate_identity(arguments.id)
-            applied = specification(load_environment(identity))
-            if applied in entries:
-                entries.remove(applied)
-                write_desired(entries, original)
             with environment_lock(identity):
-                result = remove(identity)
+                environment = load_environment(identity)
+                applied = specification(environment)
+                delete_owned_project = False
+                if subdomain_labels(environment) and environment.get("project_owned"):
+                    project = environment_project(environment)
+                    other_projects = {Path(item["path"]) for item in environments() if item["id"] != identity}
+                    other_projects.update(project_path(other_id, value) for other_id, value in desired.items() if other_id != identity)
+                    delete_owned_project = not any(other.is_relative_to(project) or project.is_relative_to(other)
+                                                   for other in other_projects)
+                    if not delete_owned_project:
+                        print(f"Keeping {project}: its path overlaps another environment.", file=sys.stderr)
+                if applied in entries:
+                    entries.remove(applied)
+                    write_desired(entries, original)
+                result = remove(identity, delete_owned_project=delete_owned_project)
         print(json.dumps(result, indent=4))
 
 

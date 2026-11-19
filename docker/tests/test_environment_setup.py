@@ -307,7 +307,7 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertEqual(str(project / 'htdocs'), site.read_text())
 
     def test_initial_build_uses_detected_and_explicit_webroots(self):
-        for number, directory in enumerate(('public', 'web', 'htdocs')):
+        for number, directory in enumerate(('_public', 'public', 'web', 'htdocs')):
             with self.subTest(directory=directory):
                 identity = f'{number + 1:012x}'
                 site = control.ENABLED / ('lamp-' + identity + '.conf')
@@ -315,9 +315,15 @@ class EnvironmentSetupTest(unittest.TestCase):
 
                 def clone(arguments, **kwargs):
                     if arguments[:2] == ['git', 'clone']:
-                        root = Path(arguments[-1]) / directory
+                        project = Path(arguments[-1])
+                        root = project / directory
                         root.mkdir()
-                        (root / 'index.php').write_text('index')
+                        (root / ('index.html' if directory == '_public' else 'index.php')).write_text('index')
+                        if directory == '_public':
+                            (project / 'public').mkdir()
+                            (project / 'public' / 'index.php').write_text('index')
+                        elif directory == 'htdocs':
+                            (project / '_public').mkdir()
                     return ''
 
                 self.run.side_effect = clone
@@ -499,7 +505,7 @@ class EnvironmentSetupTest(unittest.TestCase):
         self.assertEqual('recovered', (project / 'build-result.txt').read_text())
         self.assertFalse(any(call.args[0][0] in ('mysql', 'psql') for call in self.run.call_args_list))
 
-    def test_static_directories_are_never_deleted_even_after_builds(self):
+    def test_reconciliation_keeps_static_directories_even_after_builds(self):
         for adopted in (True, False):
             with self.subTest(adopted=adopted):
                 label = 'existing' if adopted else 'created'
@@ -512,10 +518,7 @@ class EnvironmentSetupTest(unittest.TestCase):
                     control.write_desired([value], None)
                     self.invoke('build', label)
                 self.run.reset_mock()
-                if adopted:
-                    control.reconcile(self.settings, {})
-                else:
-                    control.remove(self.identity)
+                control.reconcile(self.settings, {})
                 if adopted:
                     self.assertFalse((project / 'keep.txt').exists())
                 else:
@@ -523,6 +526,21 @@ class EnvironmentSetupTest(unittest.TestCase):
                 self.assertTrue(project.is_dir())
                 self.assertEqual(0, len(control.environments()))
                 self.assertEqual(0, sum('DROP DATABASE' in call.kwargs.get('input', '') for call in self.run.call_args_list))
+
+    def test_explicit_remove_deletes_a_lamp_created_static_directory(self):
+        self.invoke('add', '--subdomain', 'bruno')
+        project = control.PROJECTS / 'bruno'
+        (project / 'build-result.txt').write_text('built')
+        self.invoke('remove', 'bruno')
+        self.assertFalse(project.exists())
+        self.assertEqual([], control.read_desired()[0])
+
+    def test_explicit_remove_keeps_a_project_used_by_another_environment(self):
+        self.invoke('add', '--subdomain', 'bruno')
+        self.invoke('add', '--subdomain', 'second', '--directory', 'bruno/nested')
+        self.invoke('remove', 'bruno')
+        self.assertTrue((control.PROJECTS / 'bruno' / 'nested').is_dir())
+        self.assertEqual(['second'], [environment['subdomain'] for environment in control.environments()])
 
     def test_dynamic_directories_are_deleted_whether_created_or_adopted(self):
         for adopted in (True, False):
