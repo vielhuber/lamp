@@ -155,7 +155,7 @@ def setup_cache(token, zone, domain):
     return "updated" if ours else "created"
 
 
-def setup(settings, folder):
+def setup(settings, folder, *, startup=False):
     cloudflare = settings.get("cloudflare") or {}
     if not cloudflare.get("token") or not cloudflare.get("email"):
         raise ValueError("Set cloudflare.token and cloudflare.email in settings.yaml first.")
@@ -164,7 +164,31 @@ def setup(settings, folder):
     if len(zones) != 1:
         raise ValueError(f"The token does not see exactly one zone named {domain}.")
     zone, account = zones[0]["id"], zones[0]["account"]["id"]
-    results = {}
+    rulesets_path = f"/zones/{zone}/rulesets"
+    phase = "http_config_settings"
+    rule = {"ref": "lamp_disable_response_body_buffering", "description": "lamp: disable response body buffering",
+            "expression": f'(ends_with(http.host, ".{domain}"))', "action": "set_config",
+            "action_parameters": {"response_body_buffering": "none"}, "enabled": True}
+    ruleset = request(token, "GET", f"{rulesets_path}/phases/{phase}/entrypoint", missing=True)
+    status = "created"
+    if ruleset is None:
+        request(token, "POST", rulesets_path, {"name": "Configuration Rules", "kind": "zone", "phase": phase, "rules": [rule]})
+    else:
+        rules = ruleset.get("rules") or []
+        existing = next((item for item in rules if item.get("ref") == rule["ref"]), None)
+        rules_path = f"{rulesets_path}/{ruleset['id']}/rules"
+        if existing is None:
+            request(token, "POST", rules_path, rule)
+        elif existing is rules[-1] and all(existing.get(key) == value for key, value in rule.items()):
+            status = "ok"
+        else:
+            if existing is not rules[-1]:
+                rule["position"] = {"after": ""}
+            request(token, "PATCH", f"{rules_path}/{existing['id']}", rule)
+            status = "updated"
+    results = {"response buffering rule": status}
+    if startup and (folder / CREDENTIALS).is_file():
+        return results
     tunnel, results["tunnel " + domain] = setup_tunnel(token, account, domain, folder)
     results["dns *." + domain] = setup_dns(token, zone, domain, tunnel)
     service_token, results["service token lamp " + domain] = setup_service_token(token, account, domain, folder)
@@ -174,12 +198,13 @@ def setup(settings, folder):
 
 
 def main():
-    if sys.argv[1:] != ["setup"]:
-        raise SystemExit("Usage: cloudflare.py setup")
-    results = setup(control.configuration(), control.STATE / "cloudflare")
+    if sys.argv[1:] not in (["setup"], ["start"]):
+        raise SystemExit("Usage: cloudflare.py setup|start")
+    startup = sys.argv[1] == "start"
+    results = setup(control.configuration(), control.STATE / "cloudflare", startup=startup)
     for name, status in results.items():
         print(f"☁️ {name}: {status}")
-    if any(status != "ok" for status in results.values()):
+    if not startup and any(status != "ok" for status in results.values()):
         print("👉 next: ./lamp restart")
 
 

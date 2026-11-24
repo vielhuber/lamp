@@ -17,6 +17,7 @@ class FakeCloudflare:
 
     def __init__(self):
         self.tunnels, self.records, self.tokens, self.apps, self.policies, self.rules = [], [], [], [], {}, None
+        self.config_ruleset = None
         self.writes = []
         self.counter = 0
 
@@ -80,6 +81,27 @@ class FakeCloudflare:
         if route.endswith('/http_request_cache_settings/entrypoint') and method == 'PUT':
             self.rules = {'rules': [{**rule, 'id': rule.get('id') or self.identity(), 'last_updated': 'now'} for rule in payload['rules']]}
             return self.rules
+        if route == '/zones/zone-1/rulesets/phases/http_config_settings/entrypoint' and method == 'GET':
+            assert missing
+            return self.config_ruleset
+        if route == '/zones/zone-1/rulesets' and method == 'POST':
+            assert self.config_ruleset is None
+            assert payload['kind'] == 'zone' and payload['phase'] == 'http_config_settings'
+            self.config_ruleset = {'id': 'config', 'rules': [{**rule, 'id': self.identity()} for rule in payload['rules']]}
+            return self.config_ruleset
+        if route == '/zones/zone-1/rulesets/config/rules' and method == 'POST':
+            self.config_ruleset['rules'].append({**payload, 'id': self.identity()})
+            return self.config_ruleset
+        if route.startswith('/zones/zone-1/rulesets/config/rules/') and method == 'PATCH':
+            identity = route.rsplit('/', 1)[1]
+            rules = self.config_ruleset['rules']
+            index = next(index for index, rule in enumerate(rules) if rule['id'] == identity)
+            rules.pop(index)
+            if 'position' in payload:
+                assert payload['position'] == {'after': ''}
+                index = len(rules)
+            rules.insert(index, {**{key: value for key, value in payload.items() if key != 'position'}, 'id': identity})
+            return self.config_ruleset
         raise AssertionError(f'Unexpected call {method} {route}')
 
 
@@ -96,9 +118,9 @@ class CloudflareSetupTest(unittest.TestCase):
 
     def test_first_run_creates_everything_and_a_rerun_changes_nothing(self):
         self.api.rules = {'rules': [{'id': 'keep', 'description': 'other', 'expression': 'true', 'action': 'set_cache_settings', 'action_parameters': {'cache': True}, 'enabled': True, 'last_updated': 'x'}]}
-        results = cloudflare.setup(self.settings, self.folder)
+        results = cloudflare.setup(self.settings, self.folder, startup=True)
         self.assertEqual({'tunnel example.test': 'created', 'dns *.example.test': 'created', 'service token lamp example.test': 'created',
-                          'access application lamp example.test': 'created', 'cache rule': 'created'}, results)
+                          'access application lamp example.test': 'created', 'cache rule': 'created', 'response buffering rule': 'created'}, results)
         credentials = json.loads((self.folder / 'cloudflared-credentials.json').read_text())
         self.assertEqual({'AccountTag', 'TunnelSecret', 'TunnelID', 'TunnelName'}, set(credentials))
         self.assertEqual(self.api.tunnels[0]['id'], credentials['TunnelID'])
@@ -114,10 +136,36 @@ class CloudflareSetupTest(unittest.TestCase):
                          [(policy['name'], policy['decision'], policy['include']) for policy in policies])
         self.assertEqual(['other', 'lamp: bypass cache'], [rule['description'] for rule in self.api.rules['rules']])
         self.assertEqual({'cache': False}, self.api.rules['rules'][1]['action_parameters'])
+        buffering_rule, = self.api.config_ruleset['rules']
+        self.assertEqual('(ends_with(http.host, ".example.test"))', buffering_rule['expression'])
+        self.assertEqual('set_config', buffering_rule['action'])
+        self.assertEqual({'response_body_buffering': 'none'}, buffering_rule['action_parameters'])
         self.api.writes.clear()
         self.assertEqual({name: 'ok' for name in results}, cloudflare.setup(self.settings, self.folder))
         self.assertEqual([], self.api.writes)
         self.assertEqual(credentials, json.loads((self.folder / 'cloudflared-credentials.json').read_text()))
+
+    def test_start_with_existing_tunnel_reconciles_only_the_response_buffering_rule(self):
+        cloudflare.setup(self.settings, self.folder)
+        self.api.config_ruleset = None
+        self.api.writes.clear()
+        with (patch.object(cloudflare.control, 'STATE', self.folder.parent),
+              patch.object(cloudflare.control, 'configuration', return_value=self.settings),
+              patch.object(cloudflare.sys, 'argv', ['cloudflare.py', 'start']),
+              patch.object(cloudflare, 'request', wraps=self.api) as request,
+              patch('builtins.print') as output):
+            cloudflare.main()
+            output.assert_called_once_with('☁️ response buffering rule: created')
+            self.assertEqual([('POST', '/zones/zone-1/rulesets')], self.api.writes)
+            self.api.writes.clear()
+            output.reset_mock()
+            cloudflare.main()
+            output.assert_called_once_with('☁️ response buffering rule: ok')
+            self.assertEqual([], self.api.writes)
+
+        self.assertEqual(['/zones', '/zones/zone-1/rulesets/phases/http_config_settings/entrypoint', '/zones/zone-1/rulesets',
+                          '/zones', '/zones/zone-1/rulesets/phases/http_config_settings/entrypoint'],
+                         [call.args[2].split('?')[0] for call in request.call_args_list])
 
     def test_lost_local_secrets_recreate_the_tunnel_and_rotate_the_service_token(self):
         cloudflare.setup(self.settings, self.folder)
@@ -127,7 +175,7 @@ class CloudflareSetupTest(unittest.TestCase):
         (self.folder / 'cloudflare-service-token.yaml').unlink()
         results = cloudflare.setup(self.settings, self.folder)
         self.assertEqual({'tunnel example.test': 'recreated', 'dns *.example.test': 'updated', 'service token lamp example.test': 'rotated',
-                          'access application lamp example.test': 'ok', 'cache rule': 'ok'}, results)
+                          'access application lamp example.test': 'ok', 'cache rule': 'ok', 'response buffering rule': 'ok'}, results)
         self.assertEqual(1, len(self.api.tunnels))
         self.assertNotEqual(old_tunnel, self.api.tunnels[0]['id'])
         self.assertEqual(self.api.tunnels[0]['id'] + '.cfargotunnel.com', self.api.records[0]['content'])
@@ -149,6 +197,21 @@ class CloudflareSetupTest(unittest.TestCase):
         self.assertEqual([{'email': {'email': 'jane@example.test'}}], self.api.policies[app['id']][0]['include'])
         self.assertEqual(1, len(self.api.rules['rules']))
         self.assertEqual({name: 'ok' for name in results}, cloudflare.setup(self.settings, self.folder))
+
+    def test_response_buffering_rule_is_appended_and_repaired_without_touching_other_rules(self):
+        other = {'id': 'keep', 'expression': 'true', 'action': 'set_config', 'action_parameters': {'response_body_buffering': 'standard'}}
+        self.api.config_ruleset = {'id': 'config', 'rules': [other]}
+        self.assertEqual('created', cloudflare.setup(self.settings, self.folder)['response buffering rule'])
+        rules = self.api.config_ruleset['rules']
+        self.assertEqual(other, rules[0])
+        lamp_rule = rules[1].copy()
+        rules[1]['enabled'] = False
+        rules.reverse()
+        self.api.writes.clear()
+
+        self.assertEqual('updated', cloudflare.setup(self.settings, self.folder)['response buffering rule'])
+        self.assertEqual([('PATCH', f"/zones/zone-1/rulesets/config/rules/{lamp_rule['id']}")], self.api.writes)
+        self.assertEqual([other, lamp_rule], rules)
 
     def test_missing_settings_or_zone_fail_before_any_write(self):
         with self.assertRaisesRegex(ValueError, 'cloudflare.token'):

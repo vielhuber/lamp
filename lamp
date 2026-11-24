@@ -56,7 +56,7 @@ if [[ "$command" = help || "$command" = --help || "$command" = -h ]]; then
         'reset removes every dynamic environment with its checkout under _environments and its isolated databases; static environments stay. docker-reset is something else: it deletes all volumes.' \
         'presets writes the boilerplate .config/env.yaml and docker/docker-compose.override.yml when they are missing; init runs it. With mounts in .config/setup.yaml, start and restart regenerate docker/docker-compose.override.yml from them.' \
         'The final setup question can generate initial environments from existing Git checkouts (default /var/www); registered directories stay, new entries use main and private visibility. Static environments only run build scripts on explicit lamp build requests, never during start/restart or initial registration.' \
-        'cloudflare-setup creates or verifies the tunnel, the wildcard dns record, the Access application with its policies, the service token and the cache bypass rule with cloudflare.token from settings.yaml.' \
+        'cloudflare-setup creates or verifies the tunnel, the wildcard dns record, the Access application with its policies, the service token, the cache bypass rule and the response buffering rule with cloudflare.token from settings.yaml.' \
         'build [<id|subdomain>] [<build arguments>...] reruns the configured build inside the running container; without an id or subdomain it selects the environment containing the current directory; further arguments reach the build script as "$@"; docker-build rebuilds the image without layer cache.' \
         'syncdb <profile> runs a .data/syncdb profile unchanged inside the container; its target must point at the container databases (localhost, root, database.password).' \
         'list --search <term> returns only environments whose values contain the term (case-insensitive).' \
@@ -446,7 +446,7 @@ docker_setup() {
 #     oauth_client_id: '<CLIENT_UUID>'
 #     oauth_client_secret: '<CLIENT_SECRET>'
 
-# cloudflare api token (Account: Cloudflare Tunnel Edit, Access: Apps and Policies Edit, Access: Service Tokens Edit; Zone: Zone Read, DNS Edit, Cache Rules Edit)
+# cloudflare api token (Account: Cloudflare Tunnel Edit, Access: Apps and Policies Edit, Access: Service Tokens Edit; Zone: Zone Read, DNS Edit, Cache Rules Edit, Config Rules Edit)
 # and the login email allowed by cloudflare access; applied by ./lamp cloudflare-setup
 cloudflare:
     token: '<TOKEN>'

@@ -31,6 +31,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
     - `Zone › Zone › Read`
     - `Zone › DNS › Edit`
     - `Zone › Cache Rules › Edit`
+    - `Zone › Config Rules › Edit`
 
 </details>
 
@@ -98,7 +99,7 @@ a portable development machine in docker: apache, php, mysql, postgresql, redis,
 | `./lamp audit`                                                                     | audit `/var/www` inside the container; pull remote changes only for clean repositories using fast-forward                                                                                                                                         |
 | `./lamp code`                                                                      | run `code .` in the current host directory inside the running container and open VS Code attached to it                                                                                                                                           |
 | `./lamp ssh [<id\|subdomain>]`                                                     | interactive root shell in the container; with an environment: in its project directory with its variables, `git status` first if `.git` exists                                                                                                                     |
-| `./lamp cloudflare-setup`                                                          | create or verify tunnel, wildcard dns, access application, service token and cache rule; prints `ok`, `created`, `updated`, `rotated` or `recreated` per item                                                                                     |
+| `./lamp cloudflare-setup`                                                          | create or verify tunnel, wildcard dns, access application, service token, cache rule and response buffering rule; prints `ok`, `created`, `updated`, `rotated` or `recreated` per item                                                           |
 | `./lamp docker-build`                                                              | rebuild the image without layer cache, keep volumes (requires stopped container)                                                                                                                                                                  |
 | `./lamp docker-setup`                                                              | run by the first `start` of a new installation: ask for the domain and an optional data repository, create `.config`, the compose override and, without a data repository, `.data` with commented presets and example files; keeps existing files |
 | `./lamp docker-reset`                                                              | automatically stop and remove containers, **all compose volumes** and service images; no rebuild                                                                                                                                                  |
@@ -487,12 +488,14 @@ audit:
 
 <details>
 
-<summary>cache</summary>
+<summary>cache and response buffering</summary>
 
 - cloudflare caches static assets (`.js`, `.css`, images, fonts) of every proxied hostname by default, also behind access; after a rebuild the tunnel can still deliver the previous bundle
 - `cloudflare-setup` creates the cache rule `lamp: bypass cache` for every host ending in `.<domain>`; other cache rules of the zone are kept
 - verify with `./lamp curl <id> -- -sSI https://<hostname>/_build/app.js` (any static file): `cf-cache-status: DYNAMIC` on every request, never `HIT`
 - `Caching › Configuration › Development Mode` expires after three hours and is no replacement
+- `start`, `restart` and `cloudflare-setup` set [Response Body Buffering](https://developers.cloudflare.com/rules/configuration-rules/settings/#response-body-buffering) to `None` for every host ending in `.<domain>`. Cloudflare streams the response body and skips features that rewrite HTML, including email obfuscation. This can also affect security features that inspect response bodies.
+- before updating an existing installation, grant `Zone › Config Rules › Edit` for the configured LAMP zone. If you replace the token, update `cloudflare.token` in `settings.yaml`. The first `./lamp start` with the updated image applies the rule automatically.
 
 </details>
 
