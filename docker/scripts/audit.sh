@@ -155,7 +155,8 @@ for d in ./*/; do
     npm_vulnerabilities=0
     npm_audit_failed=0
     npm_audit_error=''
-    comp_ok=0
+    composer_major_updates=0
+    composer_check_failed=0
     phprc_ok=0
     nvmrc_ok=0
     mod_ok=0
@@ -245,9 +246,15 @@ for d in ./*/; do
                 fi
                 ;;
             */composer.json)
-                if ! (cd "$directory" && php8.5 "$(command -v composer)" outdated -D --strict --major-only >/dev/null 2>&1); then
-                    comp_ok=1
-                    dependency_details+=("${manifest#"$d"}: composer major updates or check failed")
+                if composer_output=$(cd "$directory" && php8.5 "$(command -v composer)" outdated -D --major-only --format=json --no-interaction 2>/dev/null) &&
+                    major_updates=$(jq -ser 'select(length == 1) | .[0] | if . == [] then 0 else .installed | arrays | length end' <<< "$composer_output" 2>/dev/null); then
+                    if ((major_updates > 0)); then
+                        composer_major_updates=1
+                        dependency_details+=("${manifest#"$d"}: composer major updates")
+                    fi
+                else
+                    composer_check_failed=1
+                    dependency_details+=("${manifest#"$d"}: composer check failed")
                 fi
                 ;;
         esac
@@ -264,7 +271,7 @@ for d in ./*/; do
         [[ "$(cat "$d/wp-content/themes/$n/.nvmrc")" = 'lts/*' ]] || nvmrc_ok=1
     fi
 
-    if [[ "$lamp_ok" -eq 0 && "$npm_ok" -eq 0 && "$npm_vulnerabilities" -eq 0 && "$npm_audit_failed" -eq 0 && "$comp_ok" -eq 0 && "$phprc_ok" -eq 0 && "$nvmrc_ok" -eq 0 && "$mod_ok" -eq 0 && "$sync_ok" -eq 0 && "$fetch_timeout" -eq 0 && "$fetch_failed" -eq 0 && "$pull_failed" -eq 0 ]]; then
+    if [[ "$lamp_ok" -eq 0 && "$npm_ok" -eq 0 && "$npm_vulnerabilities" -eq 0 && "$npm_audit_failed" -eq 0 && "$composer_major_updates" -eq 0 && "$composer_check_failed" -eq 0 && "$phprc_ok" -eq 0 && "$nvmrc_ok" -eq 0 && "$mod_ok" -eq 0 && "$sync_ok" -eq 0 && "$fetch_timeout" -eq 0 && "$fetch_failed" -eq 0 && "$pull_failed" -eq 0 ]]; then
         up_to_date=$((up_to_date+1))
     else
         m=''
@@ -274,7 +281,8 @@ for d in ./*/; do
         [[ "$npm_ok" -eq 2 ]] && m="${m}npm check failed, "
         [[ "$npm_vulnerabilities" -gt 0 ]] && m="${m}npm vulnerabilities ($npm_vulnerabilities), "
         [[ "$npm_audit_failed" -eq 1 ]] && m="${m}npm audit failed${npm_audit_error:+ ($npm_audit_error)}, "
-        [[ "$comp_ok" -eq 1 ]] && m="${m}composer, "
+        [[ "$composer_major_updates" -eq 1 ]] && m="${m}composer major updates, "
+        [[ "$composer_check_failed" -eq 1 ]] && m="${m}composer check failed, "
         [[ "$phprc_ok" -eq 1 ]] && m="${m}php, "
         [[ "$nvmrc_ok" -eq 1 ]] && m="${m}nvm, "
         [[ "$mod_ok" -eq 1 ]] && m="${m}modified, "

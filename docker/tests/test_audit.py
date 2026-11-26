@@ -418,7 +418,7 @@ printf '{"dependency":"^2.0.0"}'
         self.executable('composer', 'exit 99')
         self.executable('php8.5', 'exit 1')
         output = self.invoke()
-        self.assertIn('npm, composer, php, nvm', output)
+        self.assertIn('npm, composer check failed, php, nvm', output)
         self.assertEqual([str(theme)], (self.root / 'npm-calls').read_text().splitlines())
 
     def test_configured_repository_skips_only_npm_version_checks(self):
@@ -434,7 +434,7 @@ printf '{"dependency":"^2.0.0"}'
         self.executable('npm', 'touch "$TEST_ROOT/security-called"; printf \'{"metadata":{"vulnerabilities":{"total":0}}}\'')
         output = self.invoke(TEST_DIRTY=' M tracked', TEST_BEHIND='1',
                              TEST_AUDIT_SETTINGS=json.dumps({'skip_npm_versions': ['github.com/Developer/old-lessons']}))
-        self.assertIn('[lamp missing, composer, modified, behind/ahead]', output)
+        self.assertIn('[lamp missing, composer check failed, modified, behind/ahead]', output)
         self.assertFalse((self.root / 'ncu-called').exists())
         self.assertTrue((self.root / 'security-called').exists())
 
@@ -499,7 +499,30 @@ exit 1
         self.assertIn('editor/package.json: npm vulnerabilities (68)', output)
         self.assertIn('editor/package.json: npm check failed', output)
         self.assertIn('bot/package.json: npm audit failed (EALLOWREMOTE)', output)
-        self.assertIn('legacy/composer.json: composer', output)
+        self.assertIn('legacy/composer.json: composer check failed', output)
+
+    def test_composer_separates_major_updates_from_failed_checks(self):
+        for name in ('major', 'failed', 'invalid', 'current', 'empty'):
+            (self.project(name) / 'composer.json').write_text('{}')
+        self.executable('composer', ':')
+        self.executable('php8.5', '''
+shift
+[[ "$*" = 'outdated -D --major-only --format=json --no-interaction' ]] || exit 90
+case "$PWD" in
+    */major) printf '{"installed":[{"name":"vendor/package","version":"1.0.0","latest":"2.0.0"}]}' ;;
+    */failed) printf '{"installed":[{"name":"vendor/package"}]}'; exit 1 ;;
+    */invalid) printf '{"installed":"unknown"}' ;;
+    */current) printf '{"installed":[]}' ;;
+    */empty) printf '[]' ;;
+esac
+''')
+        output = self.invoke()
+        self.assertRegex(output, r'major\s+\[composer major updates\]')
+        self.assertRegex(output, r'failed\s+\[composer check failed\]')
+        self.assertRegex(output, r'invalid\s+\[composer check failed\]')
+        self.assertEqual(1, output.count('composer.json: composer major updates'))
+        self.assertEqual(2, output.count('composer.json: composer check failed'))
+        self.assertIn('2 projects are up to date.', output)
 
     def test_no_npm_vulnerabilities_skips_security_for_all_manifests_but_checks_versions(self):
         project = self.project('project')
